@@ -12,7 +12,6 @@
 #include "AIMesh.h"
 #include "UE_Assimp.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Kismet/KismetRenderingLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "DynamicMeshActor.h"
@@ -740,7 +739,7 @@ void AAssimpSpawnManager::FinishScene()
 
 bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal)
 {
-    if (!WorldContextObject || !AssimpMaterial || !AssimpScene || !DynamicMaterialUnreal)
+    if (!WorldContextObject || !AssimpMaterial || !AssimpScene || !DynamicMaterialUnreal || !TextureComponent)
     {
         UE_LOG(LogTemp, Warning, TEXT("ImportTextureAsync: Invalid input parameters."));
         return false;
@@ -749,16 +748,15 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
     FVector2D UVScale;
     FString Path;
     EAssimpReturn Result = AssimpMaterial->GetMaterialTexture(TextureType, UVScale, 0, Path, EAiTextureMapping::AiTextureMapping_UV);
-
     if (Result != EAssimpReturn::ReturnSuccess)
     {
         return false;
     }
 
-    UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, (TextureType == EAiTextureType::AiTextureType_NORMALS));
-    if (UKismetSystemLibrary::IsValid(EmbeddedTex))
+    const aiTexture* EmbeddedTex = AssimpScene->scene ? AssimpScene->scene->GetEmbeddedTexture(TCHAR_TO_UTF8(*Path)) : nullptr;
+    if (EmbeddedTex)
     {
-        DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, EmbeddedTex);
+        TextureComponent->RequestTexture(EmbeddedTex, DynamicMaterialUnreal, DynamicMaterialParamName.ToString(), TextureType);
         return true;
     }
 
@@ -766,23 +764,16 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
     FPaths::NormalizeFilename(FilePath);
     if (FPaths::IsRelative(FilePath))
     {
-        FString PathPart;
-        FString FilenamePart;
-        FString ExtensionPart;
-        FPaths::Split(FilePath, PathPart, FilenamePart, ExtensionPart);
-        FilePath = FPaths::ConvertRelativePathToFull(PathPart);
+        FilePath = FPaths::ConvertRelativePathToFull(FilePath);
     }
 
-    UTexture2D* Tex = UKismetRenderingLibrary::ImportFileAsTexture2D(WorldContextObject, FilePath);
-
-    if (TextureType == EAiTextureType::AiTextureType_NORMALS)
+    if (!FPaths::FileExists(FilePath))
     {
-        Tex->CompressionSettings = TC_Normalmap;
-        Tex->SRGB = false;
-        Tex->UpdateResource();
+        UE_LOG(LogTemp, Warning, TEXT("ImportTextureAsync: Texture file not found %s"), *FilePath);
+        return false;
     }
-    DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, Tex);
 
+    TextureComponent->RequestTextureFromFile(FilePath, DynamicMaterialUnreal, DynamicMaterialParamName.ToString(), TextureType);
 
     return true;
 
