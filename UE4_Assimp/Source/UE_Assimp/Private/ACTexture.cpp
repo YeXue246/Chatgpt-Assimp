@@ -270,17 +270,24 @@ void UACTexture::CreateTiles(FRuntimeTextureRequest* Req)
             Tile.Y = Y;
             Tile.Width = FMath::Min(TileSize, Req->Width - X);
             Tile.Height = FMath::Min(TileSize, Req->Height - Y);
-            Tile.Pitch = Req->Width * 4;
-            const int32 Offset = ((Y * Req->Width) + X) * 4;
-            Tile.Data = Req->PixelBuffer.Data.GetData() + Offset;
-            Req->Tiles.Add(Tile);
+            Tile.Pitch = Tile.Width * 4;
+            Tile.Data.SetNumUninitialized(Tile.Width * Tile.Height * 4);
+
+            for (int32 Row = 0; Row < Tile.Height; ++Row)
+            {
+                const int32 SrcOffset = ((Y + Row) * Req->Width + X) * 4;
+                const int32 DstOffset = Row * Tile.Pitch;
+                FMemory::Memcpy(Tile.Data.GetData() + DstOffset, Req->PixelBuffer.Data.GetData() + SrcOffset, Tile.Pitch);
+            }
+
+            Req->Tiles.Add(MoveTemp(Tile));
         }
     }
 }
 
 void UACTexture::UploadTile_RenderThread(FRuntimeTextureRequest* Req, const FTextureTile& Tile)
 {
-    if (!Req || !Req->Texture || !Tile.Data)
+    if (!Req || !Req->Texture || Tile.Data.Num() <= 0)
     {
         return;
     }
@@ -294,7 +301,7 @@ void UACTexture::UploadTile_RenderThread(FRuntimeTextureRequest* Req, const FTex
         }
 
         const FUpdateTextureRegion2D Region(Tile.X, Tile.Y, 0, 0, Tile.Width, Tile.Height);
-        RHIUpdateTexture2D(Res->GetTexture2DRHI(), 0, Region, Req->Width * 4, Tile.Data);
+        RHIUpdateTexture2D(Res->GetTexture2DRHI(), 0, Region, Tile.Pitch, Tile.Data.GetData());
     });
 }
 

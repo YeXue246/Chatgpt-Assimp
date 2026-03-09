@@ -32,7 +32,7 @@ struct FTextureTile
     int32 Width = 0;
     int32 Height = 0;
     int32 Pitch = 0;
-    const uint8* Data = nullptr;
+    TArray<uint8> Data;
 };
 
 struct FTexturePixelBuffer
