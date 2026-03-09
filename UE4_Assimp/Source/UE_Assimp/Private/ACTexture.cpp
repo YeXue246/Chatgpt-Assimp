@@ -8,6 +8,28 @@
 #include "Modules/ModuleManager.h"
 #include "assimp/texture.h"
 
+
+namespace
+{
+bool IsLinearColorTextureType(const EAiTextureType TextureType)
+{
+    switch (TextureType)
+    {
+    case EAiTextureType::AiTextureType_NORMALS:
+    case EAiTextureType::AiTextureType_NORMAL_CAMERA:
+    case EAiTextureType::AiTextureType_METALNESS:
+    case EAiTextureType::AiTextureType_DIFFUSE_ROUGHNESS:
+    case EAiTextureType::AiTextureType_SHININESS:
+    case EAiTextureType::AiTextureType_AMBIENT_OCCLUSION:
+    case EAiTextureType::AiTextureType_LIGHTMAP:
+    case EAiTextureType::AiTextureType_OPACITY:
+        return true;
+    default:
+        return false;
+    }
+}
+}
+
 UACTexture::UACTexture()
 {
     PrimaryComponentTick.bCanEverTick = true;
@@ -160,8 +182,20 @@ void UACTexture::TryStartDecode()
                 Req->Texture->AddToRoot();
                 Req->Texture->MipGenSettings = TMGS_NoMipmaps;
                 Req->Texture->NeverStream = true;
-                Req->Texture->CompressionSettings = Req->bNormal ? TC_Normalmap : TC_Default;
-                Req->Texture->SRGB = !Req->bNormal;
+                if (Req->bNormal)
+                {
+                    Req->Texture->CompressionSettings = TC_Normalmap;
+                }
+                else if (IsLinearColorTextureType(Req->TextureType))
+                {
+                    Req->Texture->CompressionSettings = TC_Masks;
+                }
+                else
+                {
+                    Req->Texture->CompressionSettings = TC_Default;
+                }
+
+                Req->Texture->SRGB = !IsLinearColorTextureType(Req->TextureType);
                 Req->Texture->UpdateResource();
 
                 Req->State = ETextureRequestState::Decoded;
