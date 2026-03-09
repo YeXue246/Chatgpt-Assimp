@@ -275,7 +275,7 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
 
             const aiTexture* Embedded = Scenes[CurrentSceneIndex]->scene->GetEmbeddedTexture(TCHAR_TO_UTF8(*Path));
 
-            TextureComponent->RequestTexture(Embedded, MID, ParamName);
+            TextureComponent->RequestTexture(Embedded, MID, ParamName, TexType);
         }
         else
         {
