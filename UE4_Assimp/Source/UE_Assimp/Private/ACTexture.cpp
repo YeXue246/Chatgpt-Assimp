@@ -6,6 +6,7 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
+#include "Misc/FileHelper.h"
 #include "assimp/texture.h"
 
 UACTexture::UACTexture()
@@ -115,6 +116,39 @@ void UACTexture::RequestTexture(const aiTexture* Texture, UMaterialInstanceDynam
     TryStartDecode();
 }
 
+void UACTexture::RequestTextureFromFile(const FString& FilePath, UMaterialInstanceDynamic* MID, const FString& ParamName, EAiTextureType Type)
+{
+    if (FilePath.IsEmpty() || !MID || ParamName.IsEmpty())
+    {
+        return;
+    }
+
+    TUniquePtr<FRuntimeTextureRequest> Req = MakeUnique<FRuntimeTextureRequest>();
+    Req->ID = FGuid::NewGuid();
+    Req->SourceFilePath = FilePath;
+    Req->MID = MID;
+    Req->ParameterName = ParamName;
+    Req->TextureType = Type;
+    Req->StartTime = FPlatformTime::Seconds();
+    Req->bNormal = (Type == EAiTextureType::AiTextureType_NORMALS || Type == EAiTextureType::AiTextureType_NORMAL_CAMERA);
+    Req->PendingMIDCount = 1;
+    Req->State = ETextureRequestState::Pending;
+
+    Requests.Add(MoveTemp(Req));
+    FRuntimeTextureRequest* Ptr = Requests.Last().Get();
+
+    DecodeQueue.Enqueue(Ptr);
+    ++TotalTextures;
+
+    if (bAutoStartStreaming)
+    {
+        StartStreaming();
+    }
+
+    TryStartDecode();
+}
+
+
 void UACTexture::TryStartDecode()
 {
     if (!bStreaming)
@@ -178,7 +212,7 @@ void UACTexture::TryStartDecode()
 
 bool UACTexture::DecodeTexture(FRuntimeTextureRequest* Req)
 {
-    if (!Req || !Req->SourceTexture)
+    if (!Req || (!Req->SourceTexture && Req->SourceFilePath.IsEmpty()))
     {
         return false;
     }
@@ -191,13 +225,56 @@ bool UACTexture::DecodeTexture(FRuntimeTextureRequest* Req)
 
 bool UACTexture::DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req)
 {
-    const aiTexture* SrcTex = Req ? Req->SourceTexture : nullptr;
-    if (!SrcTex)
+    if (!Req)
     {
         return false;
     }
 
     Req->PixelBuffer.Reset();
+
+    if (!Req->SourceFilePath.IsEmpty())
+    {
+        TArray<uint8> FileData;
+        if (!FFileHelper::LoadFileToArray(FileData, *Req->SourceFilePath) || FileData.Num() <= 0)
+        {
+            return false;
+        }
+
+        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+        EImageFormat Format = ImageWrapperModule.DetectImageFormat(FileData.GetData(), FileData.Num());
+        if (Format == EImageFormat::Invalid)
+        {
+            return false;
+        }
+
+        TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(Format);
+        if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num()))
+        {
+            return false;
+        }
+
+        Req->Width = Wrapper->GetWidth();
+        Req->Height = Wrapper->GetHeight();
+        if (Req->Width <= 0 || Req->Height <= 0)
+        {
+            return false;
+        }
+
+        const TArray<uint8>* RawBGRA = nullptr;
+        if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawBGRA) || !RawBGRA)
+        {
+            return false;
+        }
+
+        Req->PixelBuffer.Data = *RawBGRA;
+        return Req->PixelBuffer.Data.Num() == (Req->Width * Req->Height * 4);
+    }
+
+    const aiTexture* SrcTex = Req->SourceTexture;
+    if (!SrcTex)
+    {
+        return false;
+    }
 
     if (SrcTex->mHeight > 0)
     {

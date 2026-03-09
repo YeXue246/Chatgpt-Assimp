@@ -55,6 +55,7 @@ struct FRuntimeTextureRequest
 {
     FGuid ID;
     const struct aiTexture* SourceTexture = nullptr;
+    FString SourceFilePath;
     FString ParameterName;
     TWeakObjectPtr<UMaterialInstanceDynamic> MID;
     int32 Width = 0;
@@ -95,6 +96,9 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "Assimp|Texture")
     void RequestTexture(const struct aiTexture* Texture, UMaterialInstanceDynamic* MID, const FString& ParamName, EAiTextureType Type = EAiTextureType::AiTextureType_UNKNOWN);
+
+    UFUNCTION(BlueprintCallable, Category = "Assimp|Texture")
+    void RequestTextureFromFile(const FString& FilePath, UMaterialInstanceDynamic* MID, const FString& ParamName, EAiTextureType Type = EAiTextureType::AiTextureType_UNKNOWN);
 
     UFUNCTION(BlueprintCallable, Category = "Assimp|Texture")
     void TryStartDecode();
