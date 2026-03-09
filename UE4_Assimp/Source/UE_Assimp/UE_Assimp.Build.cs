@@ -34,6 +34,7 @@ public class UE_Assimp : ModuleRules
                 "StaticMeshDescription",
                 "RenderCore",
 				"RHI",
+				"ImageWrapper",
 				
 				// ... add other public dependencies that you statically link with here ...
 			}
