@@ -25,6 +25,27 @@
 #include "Engine/Texture2D.h"
 #include "Misc/Paths.h"
 
+namespace
+{
+bool IsLinearColorTexture(const EAiTextureType TextureType)
+{
+    switch (TextureType)
+    {
+    case EAiTextureType::AiTextureType_NORMALS:
+    case EAiTextureType::AiTextureType_NORMAL_CAMERA:
+    case EAiTextureType::AiTextureType_METALNESS:
+    case EAiTextureType::AiTextureType_DIFFUSE_ROUGHNESS:
+    case EAiTextureType::AiTextureType_SHININESS:
+    case EAiTextureType::AiTextureType_AMBIENT_OCCLUSION:
+    case EAiTextureType::AiTextureType_LIGHTMAP:
+    case EAiTextureType::AiTextureType_OPACITY:
+        return true;
+    default:
+        return false;
+    }
+}
+}
+
 AAssimpSpawnManager::AAssimpSpawnManager()
 {
     PrimaryActorTick.bCanEverTick = true;
@@ -320,7 +341,27 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
     TryEnqueue(EAiTextureType::AiTextureType_DIFFUSE, FString("BaseColor"));
     TryEnqueue(EAiTextureType::AiTextureType_NORMALS, FString("Normal"));
     TryEnqueue(EAiTextureType::AiTextureType_METALNESS, FString("Metallic"));
-    TryEnqueue(EAiTextureType::AiTextureType_SHININESS, FString("Roughness"));
+
+    // 优先使用 PBR Roughness 贴图；如果没有，再回退到旧式 SHININESS。
+    FVector2D RoughnessUVScale;
+    FString RoughnessPath;
+    const EAssimpReturn RoughnessResult = AIMat->GetMaterialTexture(
+        EAiTextureType::AiTextureType_DIFFUSE_ROUGHNESS,
+        RoughnessUVScale,
+        0,
+        RoughnessPath,
+        EAiTextureMapping::AiTextureMapping_UV);
+    if (RoughnessResult == EAssimpReturn::ReturnSuccess && !RoughnessPath.IsEmpty())
+    {
+        TryEnqueue(EAiTextureType::AiTextureType_DIFFUSE_ROUGHNESS, FString("Roughness"));
+    }
+    else
+    {
+        TryEnqueue(EAiTextureType::AiTextureType_SHININESS, FString("Roughness"));
+    }
+
+    TryEnqueue(EAiTextureType::AiTextureType_AMBIENT_OCCLUSION, FString("AmbientOcclusion"));
+    TryEnqueue(EAiTextureType::AiTextureType_LIGHTMAP, FString("AmbientOcclusion"));
     TryEnqueue(EAiTextureType::AiTextureType_EMISSIVE, FString("Emissive"));
 
     MID->SetScalarParameterValue("Opacity", 1.f);
@@ -775,7 +816,10 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
         return false;
     }
 
-    UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, (TextureType == EAiTextureType::AiTextureType_NORMALS));
+    const bool bIsNormalMapTexture =
+        (TextureType == EAiTextureType::AiTextureType_NORMALS ||
+         TextureType == EAiTextureType::AiTextureType_NORMAL_CAMERA);
+    UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, bIsNormalMapTexture);
     if (UKismetSystemLibrary::IsValid(EmbeddedTex))
     {
         DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, EmbeddedTex);
@@ -800,12 +844,17 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
         return false;
     }
 
-    if (TextureType == EAiTextureType::AiTextureType_NORMALS)
+    if (bIsNormalMapTexture)
     {
         Tex->CompressionSettings = TC_Normalmap;
-        Tex->SRGB = false;
-        Tex->UpdateResource();
     }
+    else if (IsLinearColorTexture(TextureType))
+    {
+        Tex->CompressionSettings = TC_Masks;
+    }
+
+    Tex->SRGB = !IsLinearColorTexture(TextureType);
+    Tex->UpdateResource();
     DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, Tex);
 
 
