@@ -70,8 +70,9 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
         else
         {
             Req->State = ETextureRequestState::Uploaded;
-            Req->PixelBuffer.Data.Reset();
             Req->Tiles.Reset();
+            Req->UploadFence.BeginFence();
+            Req->bUploadFenceBegun = true;
             ApplyQueue.Enqueue(Req);
         }
     }
@@ -242,13 +243,13 @@ bool UACTexture::DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req)
         return false;
     }
 
-    const TArray<uint8>* RawBGRA = nullptr;
-    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawBGRA) || !RawBGRA)
+    TArray<uint8> RawBGRA;
+    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawBGRA))
     {
         return false;
     }
 
-    Req->PixelBuffer.Data = *RawBGRA;
+    Req->PixelBuffer.Data = MoveTemp(RawBGRA);
     return Req->PixelBuffer.Data.Num() == (Req->Width * Req->Height * 4);
 }
 
@@ -317,6 +318,15 @@ void UACTexture::ApplyTexture(FRuntimeTextureRequest* Req)
         AsyncTask(ENamedThreads::GameThread, [this, Req]() { ApplyTexture(Req); });
         return;
     }
+
+    if (Req->bUploadFenceBegun && !Req->UploadFence.IsFenceComplete())
+    {
+        ApplyQueue.Enqueue(Req);
+        return;
+    }
+
+    Req->bUploadFenceBegun = false;
+    Req->PixelBuffer.Data.Reset();
 
     if (Req->MID.IsValid() && Req->Texture)
     {
