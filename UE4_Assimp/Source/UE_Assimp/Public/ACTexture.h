@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "Async/Async.h"
 #include "Containers/Queue.h"
+#include "RenderCommandFence.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "AIMaterial.h"
@@ -68,6 +69,8 @@ struct FRuntimeTextureRequest
     double StartTime = 0;
     double DecodeEndTime = 0;
     int32 PendingMIDCount = 0;
+    FRenderCommandFence UploadFence;
+    bool bUploadFenceBegun = false;
     EAiTextureType TextureType = EAiTextureType::AiTextureType_UNKNOWN;
     ETextureRequestState State = ETextureRequestState::Pending;
 };
