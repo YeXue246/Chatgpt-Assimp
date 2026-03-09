@@ -274,8 +274,28 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
             TextureCount++;
 
             const aiTexture* Embedded = Scenes[CurrentSceneIndex]->scene->GetEmbeddedTexture(TCHAR_TO_UTF8(*Path));
+            if (Embedded)
+            {
+                TextureComponent->RequestTexture(Embedded, MID, ParamName, TexType);
+            }
+            else
+            {
+                const bool bLoadedExternal = ImportTextureAsync(
+                    GetWorld(),
+                    TexType,
+                    FName(*ParamName),
+                    Scenes[CurrentSceneIndex],
+                    AIMat,
+                    MID);
 
-            TextureComponent->RequestTexture(Embedded, MID, ParamName, TexType);
+                if (!bLoadedExternal)
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[Texture] Failed to load external texture: %s (%s)"),
+                        *Path,
+                        *ParamName);
+                }
+            }
         }
         else
         {
@@ -774,6 +794,11 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
     }
 
     UTexture2D* Tex = UKismetRenderingLibrary::ImportFileAsTexture2D(WorldContextObject, FilePath);
+    if (!Tex)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ImportTextureAsync: failed to import texture %s"), *FilePath);
+        return false;
+    }
 
     if (TextureType == EAiTextureType::AiTextureType_NORMALS)
     {
