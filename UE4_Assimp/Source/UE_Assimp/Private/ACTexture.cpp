@@ -7,8 +7,6 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/FileHelper.h"
-#include "HAL/PlatformMemory.h"
-#include "Engine/Engine.h"
 #include "assimp/texture.h"
 
 namespace
@@ -49,95 +47,6 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
 
     Budget.MaxUploadBytesPerFrame = FMath::Max(131072, MaxUploadBytesPerFrame);
     Budget.Reset();
-
-    int32 CreatesThisFrame = FMath::Max(1, MaxTextureCreatesPerFrame);
-
-    int32 CreateChecksThisFrame = 0;
-    const int32 MaxChecksThisFrame = FMath::Max(1, MaxCreateQueueChecksPerFrame);
-
-    while (CreatesThisFrame > 0 && CreateChecksThisFrame < MaxChecksThisFrame)
-    {
-        ++CreateChecksThisFrame;
-
-        FRuntimeTextureRequest* CreateReq = nullptr;
-        if (!CreateQueue.Dequeue(CreateReq) || !CreateReq)
-        {
-            break;
-        }
-
-        if (CreateReq->State != ETextureRequestState::Decoded)
-        {
-            continue;
-        }
-
-        if (!CanCreateTextureResourceNow(CreateReq))
-        {
-            ++CreateReq->CreateDeferredFrames;
-
-            const uint64 CriticalFreeBytes = static_cast<uint64>(FMath::Max(32, CriticalAvailablePhysicalMemoryMB)) * 1024ull * 1024ull;
-            const uint64 HardFailFreeBytes = static_cast<uint64>(FMath::Max(16, HardFailAvailablePhysicalMemoryMB)) * 1024ull * 1024ull;
-            const uint64 CurrentFreeBytes = FPlatformMemory::GetStats().AvailablePhysical;
-            const bool bCriticalLowMemory = CurrentFreeBytes < CriticalFreeBytes;
-            const bool bHardFailLowMemory = CurrentFreeBytes < HardFailFreeBytes;
-            const int32 MaxDefers = FMath::Max(1, MaxCreateDefersBeforeFail);
-
-            if (bHardFailLowMemory)
-            {
-                MarkRequestFailed(CreateReq);
-
-                const FString WarnMessage = FString::Printf(
-                    TEXT("Insufficient memory when creating the texture)."));
-
-                UE_LOG(LogTemp, Warning, TEXT("%s"), *WarnMessage);
-                if (GEngine)
-                {
-                    GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, WarnMessage);
-                }
-                OnTextureCreateDeferredWarning.Broadcast(WarnMessage);
-            }
-            else
-            {
-                if (bCriticalLowMemory && CreateReq->CreateDeferredFrames >= MaxDefers)
-                {
-                    const int32 WarningIndex = (CreateReq->CreateDeferredFrames / MaxDefers);
-                    if (WarningIndex > CreateReq->CreateDeferredWarnings)
-                    {
-                        CreateReq->CreateDeferredWarnings = WarningIndex;
-
-                        const FString WarnMessage = FString::Printf(
-                            TEXT("Texture create deferred due to low memory (Req=%s, Defers=%d, Free=%lluMB, Critical=%dMB)."),
-                            *CreateReq->ID.ToString(EGuidFormats::DigitsWithHyphens),
-                            CreateReq->CreateDeferredFrames,
-                            static_cast<unsigned long long>(CurrentFreeBytes / (1024ull * 1024ull)),
-                            FMath::Max(32, CriticalAvailablePhysicalMemoryMB));
-
-                        UE_LOG(LogTemp, Warning, TEXT("%s"), *WarnMessage);
-                        if (GEngine)
-                        {
-                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, WarnMessage);
-                        }
-                        OnTextureCreateDeferredWarning.Broadcast(WarnMessage);
-                    }
-                }
-
-                CreateQueue.Enqueue(CreateReq);
-            }
-
-            continue;
-        }
-
-        CreateReq->CreateDeferredFrames = 0;
-        CreateReq->CreateDeferredWarnings = 0;
-
-
-        if (!CreateTextureResource(CreateReq))
-        {
-            MarkRequestFailed(CreateReq);
-            continue;
-        }
-
-        --CreatesThisFrame;
-    }
 
     int32 TilesThisFrame = FMath::Max(1, MaxTilesPerFrame);
 
@@ -184,7 +93,6 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
         else
         {
             Req->State = ETextureRequestState::Uploaded;
-            ReleaseDecodedBuffer(Req);
             Req->Tiles.Reset();
             Req->UploadFence.BeginFence();
             Req->bUploadFenceBegun = true;
@@ -297,43 +205,39 @@ void UACTexture::TryStartDecode()
                             return;
                         }
 
-                        //Req->Texture = UTexture2D::CreateTransient(Req->Width, Req->Height, PF_B8G8R8A8);
-                        //if (!Req->Texture)
-                        //{
-                        //    MarkRequestFailed(Req);
-                        //    --DecodeQueueCount;
-                        //    TryStartDecode();
-                        //    return;
-                        //}
+                        Req->Texture = UTexture2D::CreateTransient(Req->Width, Req->Height, PF_B8G8R8A8);
+                        if (!Req->Texture)
+                        {
+                            MarkRequestFailed(Req);
+                            --DecodeQueueCount;
+                            TryStartDecode();
+                            return;
+                        }
 
-                        //Req->Texture->AddToRoot();
-                        //Req->Texture->MipGenSettings = TMGS_NoMipmaps;
-                        //Req->Texture->NeverStream = true;
-                        //if (Req->bNormal)
-                        //{
-                        //    Req->Texture->CompressionSettings = TC_Normalmap;
-                        //}
-                        //else if (IsLinearColorTextureType(Req->TextureType))
-                        //{
-                        //    Req->Texture->CompressionSettings = TC_Masks;
-                        //}
-                        //else
-                        //{
-                        //    Req->Texture->CompressionSettings = TC_Default;
-                        //}
+                        Req->Texture->AddToRoot();
+                        Req->Texture->MipGenSettings = TMGS_NoMipmaps;
+                        Req->Texture->NeverStream = true;
+                        if (Req->bNormal)
+                        {
+                            Req->Texture->CompressionSettings = TC_Normalmap;
+                        }
+                        else if (IsLinearColorTextureType(Req->TextureType))
+                        {
+                            Req->Texture->CompressionSettings = TC_Masks;
+                        }
+                        else
+                        {
+                            Req->Texture->CompressionSettings = TC_Default;
+                        }
 
-                        //Req->Texture->SRGB = !IsLinearColorTextureType(Req->TextureType);
-                        //Req->Texture->UpdateResource();
+                        Req->Texture->SRGB = !IsLinearColorTextureType(Req->TextureType);
+                        Req->Texture->UpdateResource();
 
-                        //Req->State = ETextureRequestState::Decoded;
-                        //CreateTiles(Req);
-                        //Req->UploadedTiles = 0;
-                        //Req->TotalTiles = Req->Tiles.Num();
-                        //UploadQueue.Enqueue(Req);
                         Req->State = ETextureRequestState::Decoded;
-                        Req->DecodedBytes = Req->PixelBuffer.Data.Num();
-                        CurrentDecodedBytesInFlight += Req->DecodedBytes;
-                        CreateQueue.Enqueue(Req);
+                        CreateTiles(Req);
+                        Req->UploadedTiles = 0;
+                        Req->TotalTiles = Req->Tiles.Num();
+                        UploadQueue.Enqueue(Req);
 
                         --DecodeQueueCount;
                         TryStartDecode();
@@ -354,70 +258,6 @@ bool UACTexture::DecodeTexture(FRuntimeTextureRequest* Req)
     Req->DecodeEndTime = FPlatformTime::Seconds();
     return bDecoded;
 }
-
-bool UACTexture::CanCreateTextureResourceNow(const FRuntimeTextureRequest* Req) const
-{
-    if (!Req)
-    {
-        return false;
-    }
-
-    const FPlatformMemoryStats MemStats = FPlatformMemory::GetStats();
-    const uint64 MinFreeBytes = static_cast<uint64>(FMath::Max(32, MinAvailablePhysicalMemoryMB)) * 1024ull * 1024ull;
-    if (MemStats.AvailablePhysical < MinFreeBytes)
-    {
-        return false;
-    }
-
-    const int64 InFlightLimit = FMath::Max<int64>(4ll * 1024ll * 1024ll, MaxDecodedBytesInFlight);
-    if (CurrentDecodedBytesInFlight > InFlightLimit)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool UACTexture::CreateTextureResource(FRuntimeTextureRequest* Req)
-{
-    if (!Req || Req->Width <= 0 || Req->Height <= 0)
-    {
-        return false;
-    }
-
-    Req->Texture = UTexture2D::CreateTransient(Req->Width, Req->Height, PF_B8G8R8A8);
-    if (!Req->Texture)
-    {
-        return false;
-    }
-
-    Req->Texture->AddToRoot();
-    Req->Texture->MipGenSettings = TMGS_NoMipmaps;
-    Req->Texture->NeverStream = true;
-    Req->Texture->CompressionSettings = Req->bNormal ? TC_Normalmap : TC_Default;
-    Req->Texture->SRGB = !Req->bNormal;
-    Req->Texture->UpdateResource();
-
-    CreateTiles(Req);
-    Req->UploadedTiles = 0;
-    Req->TotalTiles = Req->Tiles.Num();
-    Req->State = ETextureRequestState::Uploading;
-    UploadQueue.Enqueue(Req);
-    return true;
-}
-
-void UACTexture::ReleaseDecodedBuffer(FRuntimeTextureRequest* Req)
-{
-    if (!Req)
-    {
-        return;
-    }
-
-    CurrentDecodedBytesInFlight = FMath::Max<int64>(0, CurrentDecodedBytesInFlight - Req->DecodedBytes);
-    Req->DecodedBytes = 0;
-    Req->PixelBuffer.Data.Reset();
-}
-
 
 bool UACTexture::DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req)
 {
@@ -631,8 +471,6 @@ void UACTexture::MarkRequestFailed(FRuntimeTextureRequest* Req)
     }
 
     Req->State = ETextureRequestState::Failed;
-    ReleaseDecodedBuffer(Req);
-    Req->Tiles.Reset();
     ++FinishedTextures;
     CheckFinished();
 }
@@ -682,10 +520,8 @@ void UACTexture::Cleanup()
 
     Requests.Reset();
     DecodeQueue.Empty();
-    CreateQueue.Empty();
     UploadQueue.Empty();
     ApplyQueue.Empty();
     AppliedMIDParams.Reset();
-    CurrentDecodedBytesInFlight = 0;
     DecodeQueueCount = 0;
 }

@@ -12,7 +12,6 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTextureReady, FName, Param, UTexture2D*, Texture);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllTexturesReady);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTextureCreateDeferredWarning, const FString&, Message);
 
 UENUM(BlueprintType)
 enum class ETextureRequestState : uint8
@@ -68,9 +67,6 @@ struct FRuntimeTextureRequest
     TArray<FTextureTile> Tiles;
     int32 UploadedTiles = 0;
     int32 TotalTiles = 0;
-    int64 DecodedBytes = 0;
-    int32 CreateDeferredFrames = 0;
-    int32 CreateDeferredWarnings = 0;
     double StartTime = 0;
     double DecodeEndTime = 0;
     int32 PendingMIDCount = 0;
@@ -122,9 +118,6 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnAllTexturesReady OnAllTexturesReady;
 
-    UPROPERTY(BlueprintAssignable, Category = "Assimp|Texture")
-    FOnTextureCreateDeferredWarning OnTextureCreateDeferredWarning;
-
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "16"))
     int32 MaxDecodeTasks = 2;
 
@@ -133,28 +126,6 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "131072", UIMin = "1048576", UIMax = "16777216"))
     int32 MaxUploadBytesPerFrame = 2 * 1024 * 1024;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "8"))
-    int32 MaxTextureCreatesPerFrame = 1;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "32", UIMin = "64", UIMax = "4096"))
-    int32 MinAvailablePhysicalMemoryMB = 256;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "4194304", UIMin = "16777216", UIMax = "536870912"))
-    int64 MaxDecodedBytesInFlight = 128ll * 1024ll * 1024ll;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "600"))
-    int32 MaxCreateDefersBeforeFail = 120;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "32", UIMin = "32", UIMax = "2048"))
-    int32 CriticalAvailablePhysicalMemoryMB = 128;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "16", UIMin = "16", UIMax = "1024"))
-    int32 HardFailAvailablePhysicalMemoryMB = 512;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "64"))
-    int32 MaxCreateQueueChecksPerFrame = 8;
-
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "64", ClampMax = "1024"))
     int32 UploadTileSize = 256;
@@ -166,9 +137,6 @@ private:
     bool DecodeTexture(FRuntimeTextureRequest* Req);
     bool DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req);
     void CreateTiles(FRuntimeTextureRequest* Req);
-    bool CreateTextureResource(FRuntimeTextureRequest* Req);
-    bool CanCreateTextureResourceNow(const FRuntimeTextureRequest* Req) const;
-    void ReleaseDecodedBuffer(FRuntimeTextureRequest* Req);
     void UploadTile_RenderThread(FRuntimeTextureRequest* Req, const FTextureTile& Tile);
     void ApplyTexture(FRuntimeTextureRequest* Req);
     void MarkRequestFailed(FRuntimeTextureRequest* Req);
@@ -177,7 +145,6 @@ private:
 
 private:
     TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> DecodeQueue;
-    TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> CreateQueue;
     TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> UploadQueue;
     TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> ApplyQueue;
     TMap<TWeakObjectPtr<UMaterialInstanceDynamic>, TSet<FName>> AppliedMIDParams;
@@ -186,7 +153,6 @@ private:
 
     int32 TotalTextures = 0;
     int32 FinishedTextures = 0;
-    int64 CurrentDecodedBytesInFlight = 0;
     std::atomic<int32> DecodeQueueCount = 0;
     bool bStreaming = false;
 };
