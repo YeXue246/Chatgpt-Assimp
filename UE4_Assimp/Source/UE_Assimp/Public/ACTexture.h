@@ -11,6 +11,7 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTextureReady, FName, Param, UTexture2D*, Texture);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllTexturesReady);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTextureCreateDeferredWarning, const FString&, Message);
 
 UENUM(BlueprintType)
 enum class ETextureRequestState : uint8
@@ -67,6 +68,7 @@ struct FRuntimeTextureRequest
     int32 TotalTiles = 0;
     int64 DecodedBytes = 0;
     int32 CreateDeferredFrames = 0;
+    int32 CreateDeferredWarnings = 0;
     double StartTime = 0;
     double DecodeEndTime = 0;
     int32 PendingMIDCount = 0;
@@ -114,6 +116,9 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnAllTexturesReady OnAllTexturesReady;
 
+    UPROPERTY(BlueprintAssignable, Category = "Assimp|Texture")
+    FOnTextureCreateDeferredWarning OnTextureCreateDeferredWarning;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "16"))
     int32 MaxDecodeTasks = 2;
 
@@ -137,6 +142,9 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "32", UIMin = "32", UIMax = "2048"))
     int32 CriticalAvailablePhysicalMemoryMB = 128;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "16", UIMin = "16", UIMax = "1024"))
+    int32 HardFailAvailablePhysicalMemoryMB = 32;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "64"))
     int32 MaxCreateQueueChecksPerFrame = 8;

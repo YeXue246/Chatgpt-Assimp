@@ -7,6 +7,7 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "HAL/PlatformMemory.h"
+#include "Engine/Engine.h"
 #include "assimp/texture.h"
 
 UACTexture::UACTexture()
@@ -50,16 +51,41 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
             ++CreateReq->CreateDeferredFrames;
 
             const uint64 CriticalFreeBytes = static_cast<uint64>(FMath::Max(32, CriticalAvailablePhysicalMemoryMB)) * 1024ull * 1024ull;
+            const uint64 HardFailFreeBytes = static_cast<uint64>(FMath::Max(16, HardFailAvailablePhysicalMemoryMB)) * 1024ull * 1024ull;
             const uint64 CurrentFreeBytes = FPlatformMemory::GetStats().AvailablePhysical;
             const bool bCriticalLowMemory = CurrentFreeBytes < CriticalFreeBytes;
+            const bool bHardFailLowMemory = CurrentFreeBytes < HardFailFreeBytes;
             const int32 MaxDefers = FMath::Max(1, MaxCreateDefersBeforeFail);
 
-            if (bCriticalLowMemory && CreateReq->CreateDeferredFrames >= MaxDefers)
+            if (bHardFailLowMemory)
             {
                 MarkRequestFailed(CreateReq);
             }
             else
             {
+                if (bCriticalLowMemory && CreateReq->CreateDeferredFrames >= MaxDefers)
+                {
+                    const int32 WarningIndex = (CreateReq->CreateDeferredFrames / MaxDefers);
+                    if (WarningIndex > CreateReq->CreateDeferredWarnings)
+                    {
+                        CreateReq->CreateDeferredWarnings = WarningIndex;
+
+                        const FString WarnMessage = FString::Printf(
+                            TEXT("Texture create deferred due to low memory (Req=%s, Defers=%d, Free=%lluMB, Critical=%dMB)."),
+                            *CreateReq->ID.ToString(EGuidFormats::DigitsWithHyphens),
+                            CreateReq->CreateDeferredFrames,
+                            static_cast<unsigned long long>(CurrentFreeBytes / (1024ull * 1024ull)),
+                            FMath::Max(32, CriticalAvailablePhysicalMemoryMB));
+
+                        UE_LOG(LogTemp, Warning, TEXT("%s"), *WarnMessage);
+                        if (GEngine)
+                        {
+                            GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow, WarnMessage);
+                        }
+                        OnTextureCreateDeferredWarning.Broadcast(WarnMessage);
+                    }
+                }
+
                 CreateQueue.Enqueue(CreateReq);
             }
 
@@ -67,6 +93,7 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
         }
 
         CreateReq->CreateDeferredFrames = 0;
+        CreateReq->CreateDeferredWarnings = 0;
 
         if (!CreateTextureResource(CreateReq))
         {
