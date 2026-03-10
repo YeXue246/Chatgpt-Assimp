@@ -275,7 +275,28 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
 
             const aiTexture* Embedded = Scenes[CurrentSceneIndex]->scene->GetEmbeddedTexture(TCHAR_TO_UTF8(*Path));
 
-            TextureComponent->RequestTexture(Embedded, MID, ParamName);
+            if (Embedded)
+            {
+                TextureComponent->RequestTexture(Embedded, MID, ParamName, TexType);
+            }
+            else
+            {
+                const bool bLoadedExternal = ImportTextureAsync(
+                    GetWorld(),
+                    TexType,
+                    FName(*ParamName),
+                    Scenes[CurrentSceneIndex],
+                    AIMat,
+                    MID);
+
+                if (!bLoadedExternal)
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[Texture] Failed to load external texture: %s (%s)"),
+                        *Path,
+                        *ParamName);
+                }
+            }
         }
         else
         {
@@ -301,6 +322,27 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
     TryEnqueue(EAiTextureType::AiTextureType_NORMALS, FString("Normal"));
     TryEnqueue(EAiTextureType::AiTextureType_METALNESS, FString("Metallic"));
     TryEnqueue(EAiTextureType::AiTextureType_SHININESS, FString("Roughness"));
+
+    FVector2D RoughnessUVScale;
+    FString RoughnessPath;
+    const EAssimpReturn RoughnessResult = AIMat->GetMaterialTexture(
+        EAiTextureType::AiTextureType_DIFFUSE_ROUGHNESS,
+        RoughnessUVScale,
+        0,
+        RoughnessPath,
+        EAiTextureMapping::AiTextureMapping_UV);
+    if (RoughnessResult == EAssimpReturn::ReturnSuccess && !RoughnessPath.IsEmpty())
+    {
+        TryEnqueue(EAiTextureType::AiTextureType_DIFFUSE_ROUGHNESS, FString("Roughness"));
+    }
+    else
+    {
+        TryEnqueue(EAiTextureType::AiTextureType_SHININESS, FString("Roughness"));
+    }
+
+    TryEnqueue(EAiTextureType::AiTextureType_AMBIENT_OCCLUSION, FString("AmbientOcclusion"));
+    TryEnqueue(EAiTextureType::AiTextureType_LIGHTMAP, FString("AmbientOcclusion"));
+
     TryEnqueue(EAiTextureType::AiTextureType_EMISSIVE, FString("Emissive"));
 
     MID->SetScalarParameterValue("Opacity", 1.f);
@@ -740,7 +782,7 @@ void AAssimpSpawnManager::FinishScene()
 
 bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal)
 {
-    if (!WorldContextObject || !AssimpMaterial || !AssimpScene || !DynamicMaterialUnreal)
+    if (!WorldContextObject || !AssimpMaterial || !AssimpScene || !DynamicMaterialUnreal || !TextureComponent)
     {
         UE_LOG(LogTemp, Warning, TEXT("ImportTextureAsync: Invalid input parameters."));
         return false;
@@ -755,34 +797,40 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
         return false;
     }
 
-    UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, (TextureType == EAiTextureType::AiTextureType_NORMALS));
-    if (UKismetSystemLibrary::IsValid(EmbeddedTex))
+
+
+    const aiTexture* EmbeddedTex = AssimpScene->scene ? AssimpScene->scene->GetEmbeddedTexture(TCHAR_TO_UTF8(*Path)) : nullptr;
+    if (EmbeddedTex)
     {
-        DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, EmbeddedTex);
+        TextureComponent->RequestTexture(EmbeddedTex, DynamicMaterialUnreal, DynamicMaterialParamName.ToString(), TextureType);
         return true;
     }
+   ////UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, (TextureType == EAiTextureType::AiTextureType_NORMALS));
+
+   // const bool bIsNormalMapTexture =
+   //     (TextureType == EAiTextureType::AiTextureType_NORMALS ||
+   //         TextureType == EAiTextureType::AiTextureType_NORMAL_CAMERA);
+   // UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, bIsNormalMapTexture);
+   // if (UKismetSystemLibrary::IsValid(EmbeddedTex))
+   // {
+   //     DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, EmbeddedTex);
+   //     return true;
+   // }
 
     FString FilePath = Path;
     FPaths::NormalizeFilename(FilePath);
     if (FPaths::IsRelative(FilePath))
     {
-        FString PathPart;
-        FString FilenamePart;
-        FString ExtensionPart;
-        FPaths::Split(FilePath, PathPart, FilenamePart, ExtensionPart);
-        FilePath = FPaths::ConvertRelativePathToFull(PathPart);
+        FilePath = FPaths::ConvertRelativePathToFull(FilePath);
     }
 
-    UTexture2D* Tex = UKismetRenderingLibrary::ImportFileAsTexture2D(WorldContextObject, FilePath);
-
-    if (TextureType == EAiTextureType::AiTextureType_NORMALS)
+    if (!FPaths::FileExists(FilePath))
     {
-        Tex->CompressionSettings = TC_Normalmap;
-        Tex->SRGB = false;
-        Tex->UpdateResource();
+        UE_LOG(LogTemp, Warning, TEXT("ImportTextureAsync: Texture file not found %s"), *FilePath);
+        return false;
     }
-    DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, Tex);
 
+    TextureComponent->RequestTextureFromFile(FilePath, DynamicMaterialUnreal, DynamicMaterialParamName.ToString(), TextureType);
 
     return true;
 
