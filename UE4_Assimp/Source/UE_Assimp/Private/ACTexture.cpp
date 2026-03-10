@@ -27,8 +27,13 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
     Budget.Reset();
 
     int32 CreatesThisFrame = FMath::Max(1, MaxTextureCreatesPerFrame);
-    while (CreatesThisFrame > 0)
+    int32 CreateChecksThisFrame = 0;
+    const int32 MaxChecksThisFrame = FMath::Max(1, MaxCreateQueueChecksPerFrame);
+
+    while (CreatesThisFrame > 0 && CreateChecksThisFrame < MaxChecksThisFrame)
     {
+        ++CreateChecksThisFrame;
+
         FRuntimeTextureRequest* CreateReq = nullptr;
         if (!CreateQueue.Dequeue(CreateReq) || !CreateReq)
         {
@@ -42,9 +47,26 @@ void UACTexture::TickComponent(float DeltaTime, ELevelTick TickType, FActorCompo
 
         if (!CanCreateTextureResourceNow(CreateReq))
         {
-            CreateQueue.Enqueue(CreateReq);
-            break;
+            ++CreateReq->CreateDeferredFrames;
+
+            const uint64 CriticalFreeBytes = static_cast<uint64>(FMath::Max(32, CriticalAvailablePhysicalMemoryMB)) * 1024ull * 1024ull;
+            const uint64 CurrentFreeBytes = FPlatformMemory::GetStats().AvailablePhysical;
+            const bool bCriticalLowMemory = CurrentFreeBytes < CriticalFreeBytes;
+            const int32 MaxDefers = FMath::Max(1, MaxCreateDefersBeforeFail);
+
+            if (bCriticalLowMemory && CreateReq->CreateDeferredFrames >= MaxDefers)
+            {
+                MarkRequestFailed(CreateReq);
+            }
+            else
+            {
+                CreateQueue.Enqueue(CreateReq);
+            }
+
+            continue;
         }
+
+        CreateReq->CreateDeferredFrames = 0;
 
         if (!CreateTextureResource(CreateReq))
         {

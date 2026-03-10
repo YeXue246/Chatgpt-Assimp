@@ -66,6 +66,7 @@ struct FRuntimeTextureRequest
     int32 UploadedTiles = 0;
     int32 TotalTiles = 0;
     int64 DecodedBytes = 0;
+    int32 CreateDeferredFrames = 0;
     double StartTime = 0;
     double DecodeEndTime = 0;
     int32 PendingMIDCount = 0;
@@ -130,6 +131,15 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "4194304", UIMin = "16777216", UIMax = "536870912"))
     int64 MaxDecodedBytesInFlight = 128ll * 1024ll * 1024ll;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "600"))
+    int32 MaxCreateDefersBeforeFail = 120;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "32", UIMin = "32", UIMax = "2048"))
+    int32 CriticalAvailablePhysicalMemoryMB = 128;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "64"))
+    int32 MaxCreateQueueChecksPerFrame = 8;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "64", ClampMax = "1024"))
     int32 UploadTileSize = 256;
