@@ -1,6 +1,7 @@
 #include "ACTexture.h"
 
 #include "Misc/Guid.h"
+#include "HAL/PlatformMemory.h"
 #include "RenderingThread.h"
 #include "Rendering/Texture2DResource.h"
 #include "IImageWrapper.h"
@@ -200,6 +201,13 @@ void UACTexture::TryStartDecode()
                         if (!bDecodeOk || !Req)
                         {
                             MarkRequestFailed(Req);
+                            --DecodeQueueCount;
+                            TryStartDecode();
+                            return;
+                        }
+
+                        if (HandleMemoryPressure(Req))
+                        {
                             --DecodeQueueCount;
                             TryStartDecode();
                             return;
@@ -474,6 +482,37 @@ void UACTexture::MarkRequestFailed(FRuntimeTextureRequest* Req)
     ++FinishedTextures;
     CheckFinished();
 }
+bool UACTexture::HandleMemoryPressure(FRuntimeTextureRequest* Req)
+{
+    if (!Req)
+    {
+        return true;
+    }
+
+    const FPlatformMemoryStats Stats = FPlatformMemory::GetStats();
+    const int32 AvailableMemoryMB = static_cast<int32>(Stats.AvailablePhysical / (1024ULL * 1024ULL));
+    const int32 CriticalThresholdMB = FMath::Max(64, CriticalMemoryThresholdMB);
+    const int32 WarningThresholdMB = FMath::Max(CriticalThresholdMB, WarningMemoryThresholdMB);
+    const FName Param(*Req->ParameterName);
+
+    if (AvailableMemoryMB < CriticalThresholdMB)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[AssimpTexture] Critical low memory (%d MB < %d MB). Marking request failed. Param=%s"), AvailableMemoryMB, CriticalThresholdMB, *Req->ParameterName);
+        OnMemoryPressure.Broadcast(ETextureMemoryPressureLevel::Critical, Param, AvailableMemoryMB, CriticalThresholdMB);
+        MarkRequestFailed(Req);
+        return true;
+    }
+
+    if (AvailableMemoryMB < WarningThresholdMB && !Req->bWarningBroadcasted)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[AssimpTexture] Memory warning (%d MB < %d MB). Continue request with potential stutter risk. Param=%s"), AvailableMemoryMB, WarningThresholdMB, *Req->ParameterName);
+        OnMemoryPressure.Broadcast(ETextureMemoryPressureLevel::Warning, Param, AvailableMemoryMB, WarningThresholdMB);
+        Req->bWarningBroadcasted = true;
+    }
+
+    return false;
+}
+
 
 void UACTexture::CheckFinished()
 {
