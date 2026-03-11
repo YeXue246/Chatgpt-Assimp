@@ -620,6 +620,13 @@ void UAIMesh::BeginBuildStaticMesh_GT()
 		MeshDescBuilder.SetNumUVLayers(1);
 	}
 
+	MeshDescBuilder.ReserveNewVertices(CachedVertices.Num());
+	if (bEnableUV)
+	{
+		MeshDescBuilder.ReserveNewUVs(CachedVertices.Num(), 0);
+	}
+	MeshDescBuilder.SuspendMeshDescriptionIndexing();
+
 	InstanceQueue.Reset(CachedVertices.Num());
 	PG = MeshDescBuilder.AppendPolygonGroup();
 }
@@ -719,6 +726,7 @@ void UAIMesh::FinalizeBuild_Build_GT()
 	Params.bAllowCpuAccess = false;
 	Params.bCommitMeshDescription = false;
 
+	MeshDescBuilder.ResumeMeshDescriptionIndexing();
 
 
 	StaticMesh->BuildFromMeshDescriptions(Meshes, Params);
@@ -779,6 +787,8 @@ void UAIMesh::BuildRawMeshData()
 	CachedVertices.SetNumUninitialized(NumVerts);
 	CachedNormals.SetNumUninitialized(NumVerts);
 	CachedUV0.SetNumUninitialized(NumVerts);
+	CachedTriangles.Reset();
+	CachedTriangles.Reserve(NumFaces * 3);
 
 	const bool bHasNormals = Mesh->mNormals != nullptr;
 	const bool bHasUVs = Mesh->HasTextureCoords(0) && Mesh->mTextureCoords[0];
@@ -786,18 +796,53 @@ void UAIMesh::BuildRawMeshData()
 	for (unsigned i = 0; i < NumVerts; ++i)
 	{
 		CachedVertices[i] = FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].y, Mesh->mVertices[i].z);
-		CachedNormals[i] = bHasNormals ? FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].y, Mesh->mNormals[i].z) : FVector::UpVector;
+		CachedNormals[i] = bHasNormals ? FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].y, Mesh->mNormals[i].z) : FVector::ZeroVector;
 		CachedUV0[i] = bHasUVs ? FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y) : FVector2D::ZeroVector;
 	}
 
-	CachedTriangles.Reserve(NumFaces * 3);
 	for (unsigned f = 0; f < NumFaces; ++f)
 	{
 		const aiFace& Face = Mesh->mFaces[f];
 		if (Face.mNumIndices < 3) continue;
-		CachedTriangles.Add(Face.mIndices[0]);
-		CachedTriangles.Add(Face.mIndices[1]);
-		CachedTriangles.Add(Face.mIndices[2]);
+
+		for (unsigned i = 2; i < Face.mNumIndices; ++i)
+		{
+			CachedTriangles.Add(Face.mIndices[0]);
+			CachedTriangles.Add(Face.mIndices[i - 1]);
+			CachedTriangles.Add(Face.mIndices[i]);
+		}
+	}
+
+	if (!bHasNormals)
+	{
+		for (int32 TriIndex = 0; TriIndex + 2 < CachedTriangles.Num(); TriIndex += 3)
+		{
+			const int32 i0 = CachedTriangles[TriIndex];
+			const int32 i1 = CachedTriangles[TriIndex + 1];
+			const int32 i2 = CachedTriangles[TriIndex + 2];
+
+			if (!CachedVertices.IsValidIndex(i0) || !CachedVertices.IsValidIndex(i1) || !CachedVertices.IsValidIndex(i2))
+			{
+				continue;
+			}
+
+			const FVector FaceNormal = (CachedVertices[i1] - CachedVertices[i0]).Cross(CachedVertices[i2] - CachedVertices[i0]);
+			CachedNormals[i0] += FaceNormal;
+			CachedNormals[i1] += FaceNormal;
+			CachedNormals[i2] += FaceNormal;
+		}
+	}
+
+	for (int32 i = 0; i < CachedNormals.Num(); ++i)
+	{
+		if (CachedNormals[i].IsNearlyZero())
+		{
+			CachedNormals[i] = FVector::UpVector;
+		}
+		else
+		{
+			CachedNormals[i].Normalize();
+		}
 	}
 
 	AsyncTask(ENamedThreads::GameThread, [WeakThis = TWeakObjectPtr<UAIMesh>(this)]()
@@ -909,4 +954,3 @@ void UAIMesh::BuildRawMeshData()
 //	BuildState = EAIMeshBuildState::Ready;
 //	OnStaticMeshReady.Broadcast();
 //}
-
