@@ -25,6 +25,8 @@
 #include "IImageWrapperModule.h"
 #include "Engine/Texture2D.h"
 #include "Misc/Paths.h"
+#include "HAL/PlatformMemory.h"
+#include "HAL/PlatformMisc.h"
 
 AAssimpSpawnManager::AAssimpSpawnManager()
 {
@@ -44,12 +46,14 @@ AAssimpSpawnManager::AAssimpSpawnManager()
 void AAssimpSpawnManager::BeginPlay()
 {
     Super::BeginPlay();
-    //TextureComponent->OnAllTexturesUploaded.AddLambda([this]()
-    //{
-    //    UE_LOG(LogTemp, Verbose, TEXT("[UACTexture] All textures uploaded"));
-    //});
+
 
     TextureComponent->OnAllTexturesReady.AddDynamic(this, &AAssimpSpawnManager::OnAllSceneMaterialFinished);
+
+    if (bAutoApplyRecommendedSettingsAtBeginPlay)
+    {
+        ApplyRecommendedPerformanceSettings();
+    }
 }
 
 
@@ -57,7 +61,45 @@ void AAssimpSpawnManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     Super::EndPlay(EndPlayReason);
 
+}
 
+void AAssimpSpawnManager::ApplyRecommendedPerformanceSettings()
+{
+    const FPlatformMemoryConstants MemoryConstants = FPlatformMemory::GetConstants();
+    const int32 TotalMemoryGB = FMath::Max(1, static_cast<int32>(MemoryConstants.TotalPhysical / (1024ull * 1024ull * 1024ull)));
+    const int32 LogicalCores = FMath::Max(2, FPlatformMisc::NumberOfCoresIncludingHyperthreads());
+
+    MaxConcurrentRawTasks = FMath::Clamp(LogicalCores / 4, 2, 4);
+    MaxMeshesPerFrame = 2;
+    MaterialPerFrame = 2;
+    NodePerFrame = 4;
+    SpawnPerFrame = 2;
+    MaxMaterialsPerFrame = 2;
+    MaxNodesPerFrame = 4;
+    LoopBuildHandleTime = 0.008f;
+
+    VertexBudgetPerFrame = (TotalMemoryGB >= 16) ? 2200 : 1400;
+    TriangleBudgetPerFrame = (TotalMemoryGB >= 16) ? 3000 : 1800;
+
+    if (TextureComponent)
+    {
+        TextureComponent->MaxDecodeTasks = FMath::Clamp(LogicalCores / 6, 2, 3);
+        TextureComponent->MaxTilesPerFrame = 2;
+        TextureComponent->MaxUploadBytesPerFrame = (TotalMemoryGB >= 16) ? 4 * 1024 * 1024 : 2 * 1024 * 1024;
+        TextureComponent->UploadTileSize = 256;
+        TextureComponent->WarningMemoryThresholdMB = (TotalMemoryGB >= 16) ? 1536 : 1024;
+        TextureComponent->CriticalMemoryThresholdMB = (TotalMemoryGB >= 16) ? 384 : 256;
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[Assimp][PerfPreset] Cores=%d MemoryGB=%d RawTasks=%d VertBudget=%d TriBudget=%d DecodeTasks=%d UploadMB=%d"),
+        LogicalCores,
+        TotalMemoryGB,
+        MaxConcurrentRawTasks,
+        VertexBudgetPerFrame,
+        TriangleBudgetPerFrame,
+        TextureComponent ? TextureComponent->MaxDecodeTasks : 0,
+        TextureComponent ? TextureComponent->MaxUploadBytesPerFrame / (1024 * 1024) : 0);
 }
 
 void AAssimpSpawnManager::InitializeAndStart(UObject* WorldContextObject, const TArray<UAIScene*>& InScenes)
@@ -160,9 +202,10 @@ void AAssimpSpawnManager::Tick(float DeltaSeconds)
             Tick_MakeMaterials();
             if (MaterialIndex >= SceneAIMaterials.Num())
             {
-                UE_LOG(LogTemp, Log,
-                    TEXT("[TextureDecode] Texture Uploade Start"),
-                    TextureCooldownFrames);
+                if (bEnableVerboseLog)
+                {
+                    UE_LOG(LogTemp, Log, TEXT("[TextureDecode] Texture upload start"));
+                }
                 bBuildingTextureTasks = true;
                 if (TextureCount == 0)
                 {
@@ -186,9 +229,6 @@ void AAssimpSpawnManager::Tick(float DeltaSeconds)
 
     if (TextureCooldownFrames > 0)
     {
-        UE_LOG(LogTemp, Log,
-            TEXT("[TextureDecode] Enqueued texture: %.5f"),
-            TextureCooldownFrames);
         TextureCooldownFrames = TextureCooldownFrames - DeltaSeconds;
         return; 
     }
@@ -322,7 +362,6 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
     TryEnqueue(EAiTextureType::AiTextureType_DIFFUSE, FString("BaseColor"));
     TryEnqueue(EAiTextureType::AiTextureType_NORMALS, FString("Normal"));
     TryEnqueue(EAiTextureType::AiTextureType_METALNESS, FString("Metallic"));
-    TryEnqueue(EAiTextureType::AiTextureType_SHININESS, FString("Roughness"));
 
     FVector2D RoughnessUVScale;
     FString RoughnessPath;
@@ -351,107 +390,6 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
     MaterialIndex++;
     Count++;
 
-        //TSharedPtr<FMaterialTextureTracker> Tracker = MakeShared<FMaterialTextureTracker>();
-        //ActiveTextureTrackers.Add(Tracker);
-        //Tracker->SceneIndex = CurrentSceneIndex;
-        //Tracker->Generation = TextureGeneration;
-
-        //int32 TextureCount = 0;
-
-        //auto TryEnqueue = [&](EAiTextureType TexType, FName ParamName)
-        //    {
-        //        FVector2D UVScale;
-        //        FString Path;
-        //        EAssimpReturn Result = AIMat->GetMaterialTexture(TexType, UVScale, 0, Path, EAiTextureMapping::AiTextureMapping_UV);
-
-        //        if (Result == EAssimpReturn::ReturnSuccess && !Path.IsEmpty())
-        //        {
-        //            if (FPaths::IsRelative(Path))
-        //            {
-        //                Path = FPaths::Combine(
-        //                    FPaths::GetPath(Scenes[CurrentSceneIndex]->FullFilePath),
-        //                    Path);
-        //            }
-        //            FPaths::NormalizeFilename(Path);
-
-        //            UE_LOG(LogTemp, Verbose,
-        //                TEXT("[Texture] Decode thread entered222 %s : %s"),
-        //                *ParamName.ToString(),
-        //                *Path);
-
-        //            TextureCount++;
-        //            EnqueueTextureDecode(
-        //                Path,
-        //                TexType,
-        //                ParamName,
-        //                MID,
-        //                Tracker);
-        //        }
-        //        else
-        //        {
-        //            if (TexType == EAiTextureType::AiTextureType_DIFFUSE)
-        //            {
-        //                FLinearColor BaseColor = FLinearColor::White;
-        //                AIMat->GetMaterialBaseColor(BaseColor);
-
-        //                MID->SetScalarParameterValue(
-        //                    TEXT("UseBaseColorConstant"), 1.0f);
-        //                MID->SetVectorParameterValue(
-        //                    TEXT("BaseColorConstant"), BaseColor);
-
-        //                UE_LOG(LogTemp, Verbose,
-        //                    TEXT("[Texture] Use BaseColor constant: %s"),
-        //                    *BaseColor.ToString());
-
-        //            }
-        //        }
-        //    };
-
-        //bool isbasecolor = ImportTextureAsync(GetWorld(), EAiTextureType::AiTextureType_DIFFUSE, "BaseColor", Scenes[CurrentSceneIndex], AIMat, MID);
-        //if (isbasecolor)
-        //{
-        //    FLinearColor BaseColor = FLinearColor::White;
-        //    AIMat->GetMaterialBaseColor(BaseColor);
-
-        //    MID->SetScalarParameterValue(
-        //        TEXT("UseBaseColorConstant"), 1.0f);
-        //    MID->SetVectorParameterValue(
-        //        TEXT("BaseColorConstant"), BaseColor);
-
-        //    UE_LOG(LogTemp, Verbose,
-        //        TEXT("[Texture] Use BaseColor constant: %s"),
-        //        *BaseColor.ToString());
-        //}
-        ////ImportTextureAsync(GetWorld(), EAiTextureType::AiTextureType_NORMALS, "Normal", Scenes[CurrentSceneIndex], AIMat, MID);
-        ////ImportTextureAsync(GetWorld(), EAiTextureType::AiTextureType_METALNESS, "Metallic", Scenes[CurrentSceneIndex], AIMat, MID);
-        ////ImportTextureAsync(GetWorld(), EAiTextureType::AiTextureType_SHININESS, "Roughness", Scenes[CurrentSceneIndex], AIMat, MID);
-        ////ImportTextureAsync(GetWorld(), EAiTextureType::AiTextureType_EMISSIVE, "Emissive", Scenes[CurrentSceneIndex], AIMat, MID);
-
-        //TryEnqueue(EAiTextureType::AiTextureType_DIFFUSE, FName("BaseColor"));
-        //TryEnqueue(EAiTextureType::AiTextureType_NORMALS, FName("Normal"));
-        //TryEnqueue(EAiTextureType::AiTextureType_METALNESS, FName("Metallic"));
-        //TryEnqueue(EAiTextureType::AiTextureType_SHININESS, FName("Roughness"));
-        //TryEnqueue(EAiTextureType::AiTextureType_EMISSIVE, FName("Emissive"));
-
-        //Tracker->Init(FMath::Max(TextureCount, 1));
-        //int32 CapturedSceneIndex = CurrentSceneIndex;
-        //Tracker->OnAllFinished = [this, Tracker, CapturedSceneIndex]()
-        //    {
-        //        ActiveTextureTrackers.Remove(Tracker);
-        //        const int32 Left = --PendingMaterialCount;
-        //        if (Left == 0)
-        //        {
-        //            OnSceneMaterialFinished(CapturedSceneIndex);
-        //        }
-        //    };
-
-        //if (TextureCount == 0)
-        //    Tracker->OneFinished();
-
-        //MID->SetScalarParameterValue("Opacity", 1.f);
-
-        //MaterialIndex++;
-        //Count++;
     }
 }
 
@@ -654,12 +592,15 @@ void AAssimpSpawnManager::Tick_BuildMesh()
                 if (bEnableVerboseLog) UE_LOG(LogTemp, Warning, TEXT("[BuildMesh]: Mesh or StaticMesh for task %d"), CurrentSceneIndex);
                 const FBoxSphereBounds B = Mesh->StaticMesh->GetBounds();
 
-                UE_LOG(LogTemp, Warning,
-                    TEXT("Bounds Origin=%s Extent=%s Radius=%.2f"),
-                    *B.Origin.ToString(),
-                    *B.BoxExtent.ToString(),
-                    B.SphereRadius
-                );
+                if (bEnableVerboseLog)
+                {
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("Bounds Origin=%s Extent=%s Radius=%.2f"),
+                        *B.Origin.ToString(),
+                        *B.BoxExtent.ToString(),
+                        B.SphereRadius
+                    );
+                }
             }
             else
             {
@@ -688,7 +629,11 @@ void AAssimpSpawnManager::Tick_SpawnMeshes()
 
         if (Task.Node == nullptr || Task.Mesh == nullptr)
         {
-            UE_LOG(LogTemp, Error, TEXT("Invalid Task: Node or Mesh is null"));
+            if (bEnableVerboseLog)
+            {
+                UE_LOG(LogTemp, Error, TEXT("Invalid Task: Node or Mesh is null"));
+            }
+
             CurrentTaskIndex++;
             continue;
         }
@@ -777,9 +722,10 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
                     MatInterface ? *MatInterface->GetName() : TEXT("<null>"),
                     bTwoSided ? 1 : 0,
                     static_cast<int32>(BlendMode));
+
+                UE_LOG(LogTemp, Warning, TEXT("[SpawnOneMesh]: Mesh or StaticMesh for MaterialIndexin scene %d"), Task.MaterialIndex);
             }
             
-            UE_LOG(LogTemp, Warning, TEXT("[SpawnOneMesh]: Mesh or StaticMesh for MaterialIndexin scene %d"), Task.MaterialIndex);
         }
         else
         {
@@ -843,17 +789,7 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
         TextureComponent->RequestTexture(EmbeddedTex, DynamicMaterialUnreal, DynamicMaterialParamName.ToString(), TextureType);
         return true;
     }
-   ////UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, (TextureType == EAiTextureType::AiTextureType_NORMALS));
 
-   // const bool bIsNormalMapTexture =
-   //     (TextureType == EAiTextureType::AiTextureType_NORMALS ||
-   //         TextureType == EAiTextureType::AiTextureType_NORMAL_CAMERA);
-   // UTexture2D* EmbeddedTex = AssimpScene->GetEmbeddedTexture(Path, bIsNormalMapTexture);
-   // if (UKismetSystemLibrary::IsValid(EmbeddedTex))
-   // {
-   //     DynamicMaterialUnreal->SetTextureParameterValue(DynamicMaterialParamName, EmbeddedTex);
-   //     return true;
-   // }
 
     FString FilePath = Path;
     FPaths::NormalizeFilename(FilePath);
@@ -943,189 +879,7 @@ void AAssimpSpawnManager::EnqueueTextureDecode(
 
 }
 
-//void AAssimpSpawnManager::ResetTexturePipeline()
-//{
-//    TextureGeneration++;
-//    FPendingTextureCreate Dummy;
-//    while (TextureCreateQueue.Dequeue(Dummy)) {}
-//
-//    if (bEnableVerboseLog)
-//        UE_LOG(LogTemp, Warning,
-//            TEXT("[Assimp] Texture pipeline reset. Generation = %d"),
-//            TextureGeneration);
-//}
-//
 
-//
-//void AAssimpSpawnManager::Tick_TextureCreate()
-//{
-//    int32 Budget = MaxTextureCreatePerFrame;
-//
-//    while (Budget-- > 0)
-//    {
-//        FDecodedTexture Pending;
-//        if (!TextureCreateQueue_GT.Dequeue(Pending))
-//            break;
-//
-//        if (Pending.Generation != TextureGeneration ||
-//            Pending.SceneIndex != CurrentSceneIndex ||
-//            !Pending.MID.IsValid() ||
-//            !Pending.Tracker.IsValid())
-//        {
-//            if (Pending.Tracker.IsValid())
-//                Pending.Tracker->OneFinished();
-//            continue;
-//        }
-//
-//        UTexture2D* Texture = UTexture2D::CreateTransient(Pending.Width, Pending.Height, PF_B8G8R8A8);
-//        if (!Texture || !Texture->GetPlatformData())
-//        {
-//            Pending.Tracker->OneFinished();
-//            continue;
-//        }
-//
-//        Texture->MipGenSettings = TMGS_NoMipmaps;
-//        Texture->NeverStream = true;
-//        Texture->SRGB = Pending.TextureType != EAiTextureType::AiTextureType_NORMALS;
-//        Texture->CompressionSettings = Pending.TextureType == EAiTextureType::AiTextureType_NORMALS
-//            ? TC_Normalmap
-//            : TC_Default;
-//
-//        Texture->UpdateResource();
-//
-//        const int32 TileSize = GetTileSize(SelectedTileSizeEnum);
-//
-//        for (int32 Y = 0; Y < Pending.Height; Y += TileSize)
-//        {
-//            for (int32 X = 0; X < Pending.Width; X += TileSize)
-//            {
-//                FTextureTileTask Tile;
-//                Tile.TileX = X;
-//                Tile.TileY = Y;
-//                Tile.TileW = FMath::Min(TileSize, Pending.Width - X);
-//                Tile.TileH = FMath::Min(TileSize, Pending.Height - Y);
-//                Tile.FullW = Pending.Width;
-//                Tile.FullH = Pending.Height;
-//
-//                Tile.RawBGRA.SetNumUninitialized(Tile.TileW * Tile.TileH * 4);
-//
-//                for (int32 y = 0; y < Tile.TileH; ++y)
-//                {
-//                    const int32 Src = ((Y + y) * Pending.Width + X) * 4;
-//                    const int32 Dst = y * Tile.TileW * 4;
-//                    FMemory::Memcpy(
-//                        Tile.RawBGRA.GetData() + Dst,
-//                        Pending.RawBGRA.GetData() + Src,
-//                        Tile.TileW * 4
-//                    );
-//                }
-//
-//                Tile.Texture = Texture;
-//                Tile.MID = Pending.MID;
-//                Tile.ParamName = Pending.ParamName;
-//                Tile.Tracker = Pending.Tracker;
-//
-//                TextureUpdateQueue_GT.Enqueue(MoveTemp(Tile));
-//            }
-//        }
-//    }
-//
-//
-//    TextureCooldownFrames = 1;
-//}
-//
-//void AAssimpSpawnManager::TickTexturePending()
-//{
-//    if (TextureCreateQueue.IsEmpty())
-//    {
-//        return;
-//    }
-//
-//    int32 Budget = MaxTextureCreatePerFrame;
-//
-//    while (Budget-- > 0)
-//    {
-//        FPendingTextureCreate Pending;
-//        if (!TextureCreateQueue.Dequeue(Pending))
-//        {
-//            break;
-//        }
-//
-//        if (Pending.Generation != TextureGeneration ||
-//            Pending.SceneIndex != CurrentSceneIndex ||
-//            !Pending.MID.IsValid() ||
-//            !Pending.Tracker.IsValid())
-//        {
-//            Pending.Tracker->OneFinished();
-//            continue;
-//        }
-//
-//        DispatchTexture(Pending);
-//    }
-//}
-//
-//void AAssimpSpawnManager::Tick_TextureUpdate()
-//{
-//    int32 Budget = MaxTilesPerFrame;
-//    UTexture2D* UpdatedTexture = nullptr;
-//    FName UpdatedParam;
-//    UMaterialInstanceDynamic* UpdatedMID = nullptr;
-//
-//    while (Budget-- > 0)
-//    {
-//        FTextureTileTask Tile;
-//        if (!TextureUpdateQueue_GT.Dequeue(Tile))
-//            break;
-//
-//        if (!Tile.Texture.IsValid())
-//        {
-//            Tile.Tracker->OneFinished();
-//            continue;
-//        }
-//
-//        UTexture2D* Tex = Tile.Texture.Get();
-//        FTexturePlatformData* PD = Tex->GetPlatformData();
-//
-//        void* Base = PD->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-//
-//        for (int32 y = 0; y < Tile.TileH; ++y)
-//        {
-//            const int32 Dst =
-//                ((Tile.TileY + y) * Tile.FullW + Tile.TileX) * 4;
-//            const int32 Src =
-//                y * Tile.TileW * 4;
-//
-//            FMemory::Memcpy(
-//                (uint8*)Base + Dst,
-//                Tile.RawBGRA.GetData() + Src,
-//                Tile.TileW * 4
-//            );
-//        }
-//
-//        PD->Mips[0].BulkData.Unlock();
-//
-//        UpdatedTexture = Tex;
-//        UpdatedMID = Tile.MID.Get();
-//        UpdatedParam = Tile.ParamName;
-//
-//        Tile.Tracker->OneFinished();
-//    }
-//
-//    if (UpdatedTexture)
-//    {
-//        UpdatedTexture->UpdateResource();
-//
-//        if (UpdatedMID)
-//        {
-//            UpdatedMID->SetTextureParameterValue(
-//                UpdatedParam,
-//                UpdatedTexture
-//            );
-//        }
-//    }
-//}
-//
-//
 void AAssimpSpawnManager::DispatchTexture(const FPendingTextureItem& Pending)
 {
     if (!Scenes.IsValidIndex(Pending.SceneIndex) || !Scenes[Pending.SceneIndex]->scene)
@@ -1264,46 +1018,7 @@ bool AAssimpSpawnManager::DecodeEmbeddedTexture(const aiTexture* Tex, FTextureRa
         }
         return true;
     }
-    //else
-    //{
-    //    UE_LOG(LogAssimp, Warning, TEXT("DecodeEmbeddedTexture: Tex->mHeight == 0"));
-
-    //    const size_t SizeInBytes = static_cast<size_t>(Tex->mWidth);
-    //    if (SizeInBytes == 0 || !Tex->pcData)
-    //    {
-    //        UE_LOG(LogAssimp, Warning, TEXT("GetEmbeddedTexture: compressed texture has zero size or null data"));
-    //        return false;
-    //    }
-
-    //    const unsigned char* BinaryData = reinterpret_cast<const unsigned char*>(Tex->pcData);
-    //    TArray<uint8> Buffer;
-    //    Buffer.Append(BinaryData, static_cast<int32>(SizeInBytes));
-
-
-    //    const uint8* Data = reinterpret_cast<const uint8*>(Tex->pcData);
-    //    const int32 Size = static_cast<int32>(Tex->mWidth);
-
-    //    IImageWrapperModule& ImageWrapper =
-    //        FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
-
-    //    EImageFormat Format =
-    //        ImageWrapper.DetectImageFormat(Data, Size);
-
-    //    if (Format == EImageFormat::Invalid)
-    //        return false;
-
-    //    TSharedPtr<IImageWrapper> Wrapper =
-    //        ImageWrapper.CreateImageWrapper(Format);
-
-    //    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(Data, Size))
-    //        return false;
-
-    //    Out.Width = Wrapper->GetWidth();
-    //    Out.Height = Wrapper->GetHeight();
-    //    Out.bIsCompressed = true;
-    //    Out.RawBGRA = MoveTemp(Buffer);
-    //    return true;
-    //}
+  
     const uint8* Data =
         reinterpret_cast<const uint8*>(Tex->pcData);
 
@@ -1348,31 +1063,7 @@ bool AAssimpSpawnManager::DecodeExternalTexture(const FPendingTextureItem& Pendi
         Out.Height,
         Out.RawBGRA);
 
-    //IImageWrapperModule& WrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
-    //EImageFormat Format = WrapperModule.DetectImageFormat(FileData.GetData(), FileData.Num());
-    //if (Format == EImageFormat::Invalid)
-    //{
-    //    return false;
-    //}
-
-    //TSharedPtr<IImageWrapper> Wrapper = WrapperModule.CreateImageWrapper(Format);
-    //if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num()))
-    //{
-    //    return false;
-    //}
-
-    //TArray<uint8> BGRA;
-    //if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, BGRA))
-    //{
-    //    return false;
-    //}
-
-
-    //Out.Width = Wrapper->GetWidth();
-    //Out.Height = Wrapper->GetHeight();
-    //Out.RawBGRA = MoveTemp(BGRA);
-
-    //return true;
+  
 }
 
 void AAssimpSpawnManager::OnAllSceneMaterialFinished()
@@ -1380,8 +1071,7 @@ void AAssimpSpawnManager::OnAllSceneMaterialFinished()
 
 
     bBuildingTextureTasks = false;
-    TextureCooldownFrames = 1;
-    //TextureComponent->StopTextureTick();
+    TextureCooldownFrames = DefaultTextureCooldownFrames;
     bBuildingMeshTasks = true;
 
     if (!bRootQueued)

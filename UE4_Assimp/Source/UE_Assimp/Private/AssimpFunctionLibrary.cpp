@@ -925,7 +925,20 @@ UAssimpImportContext* UAssimpFunctionLibrary::ImportScenesAsync(
 
 
 	Context->WorldContextObject = WorldContextObject;
-	Context->MaxConcurrentTasks = FMath::Max(1, MaxConcurrentTasks);
+	const int32 LogicalCores = FMath::Max(1, FPlatformMisc::NumberOfCoresIncludingHyperthreads());
+	const int32 PhysicalCores = FMath::Max(1, FPlatformMisc::NumberOfCores());
+	const int32 RecommendedMaxTasks = FMath::Clamp(PhysicalCores / 3, 1, 4);
+	const int32 RequestedTasks = (MaxConcurrentTasks <= 0) ? RecommendedMaxTasks : MaxConcurrentTasks;
+	Context->MaxConcurrentTasks = FMath::Clamp(RequestedTasks, 1, RecommendedMaxTasks);
+
+	UE_LOG(LogAssimp, Log,
+		TEXT("Async import concurrency: requested=%d, clamped=%d, recommendedMax=%d (physical=%d, logical=%d)"),
+		MaxConcurrentTasks,
+		Context->MaxConcurrentTasks,
+		RecommendedMaxTasks,
+		PhysicalCores,
+		LogicalCores);
+
 	Context->TotalCount = InFilenames.Num();
 	Context->PendingFiles = InFilenames;
 	Context->OnProgressUpdated = OnProgressUpdated;

@@ -245,17 +245,17 @@ float UAIScene::GetUnitScaleFactor()
 
 void UAIScene::SetBuildVal(int32 MaxMeshes, int32 MaxCameras, int32 MaxLights, int32 MaxMaterials, int32 MaxNodes, float HandleTime)
 {
-	MaxMeshesPerFrame = MaxMeshes;
+	MaxMeshesPerFrame = FMath::Max(1, MaxMeshes);
 
-	MaxCamerasPerFrame = MaxCameras;
+	MaxCamerasPerFrame = FMath::Max(1, MaxCameras);
 
-	MaxLightsPerFrame = MaxLights;
+	MaxLightsPerFrame = FMath::Max(1, MaxLights);
 
-	MaxMaterialsPerFrame = MaxMaterials;
+	MaxMaterialsPerFrame = FMath::Max(1, MaxMaterials);
 
-	MaxNodesPerFrame = MaxNodes;
+	MaxNodesPerFrame = FMath::Max(1, MaxNodes);
 
-	LoopBuildHandleTime = HandleTime;
+	LoopBuildHandleTime = FMath::Clamp(HandleTime, 1.0f / 240.0f, 1.0f / 60.0f);
 }
 
 
@@ -506,9 +506,16 @@ EPixelFormat UAIScene::GetPixelFormat(const aiTexture* Texture)
 	 if (!IsValid(this)) return;
 
 	 int32 Count = 0;
+	 const double StartTime = FPlatformTime::Seconds();
+	 const double MaxBudgetSeconds = FMath::Max(0.0001, static_cast<double>(MaxBuildTimeMsPerTick) / 1000.0);
 
 	 while (Count < BuildBatchSize)
 	 {
+		 if ((FPlatformTime::Seconds() - StartTime) >= MaxBudgetSeconds)
+		 {
+			 break;
+		 }
+
 		 switch (BuildPhase)
 		 {
 		 case EAISceneBuildPhase::Meshes:

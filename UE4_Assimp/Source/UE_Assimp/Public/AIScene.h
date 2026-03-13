@@ -53,7 +53,7 @@ public:
 	static UAIScene* InternalConstructNewScene(const aiScene* Scene, const bool DisableAutoSpaceChange);
 
 	static UAIScene* InternalConstructNewScene_A(UObject* WorldContextObject, const aiScene* Scene, const bool DisableAutoSpaceChange, 
-		int32 MaxMeshesVal = 1, int32 MaxCamerasVal = 1, int32 MaxLightsVal = 1, int32 MaxMaterialsVal = 1, int32 MaxNodesVal = 1, float HandleTime = 0.034f);
+		int32 MaxMeshesVal = 1, int32 MaxCamerasVal = 1, int32 MaxLightsVal = 1, int32 MaxMaterialsVal = 1, int32 MaxNodesVal = 1, float HandleTime = 1.0f / 60.0f);
 
 
 	void StartTimer();
@@ -168,7 +168,10 @@ public:
 	int32 MaxNodesPerFrame = 2;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Build")
-	float LoopBuildHandleTime = 0.034f;
+	float LoopBuildHandleTime = 1.0f / 60.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Build", meta = (ClampMin = "0.1", UIMin = "0.1", UIMax = "8.0"))
+	float MaxBuildTimeMsPerTick = 2.0f;
 
 	TArray<FAINodeBuildItem> PendingNodeBuildQueue;
 

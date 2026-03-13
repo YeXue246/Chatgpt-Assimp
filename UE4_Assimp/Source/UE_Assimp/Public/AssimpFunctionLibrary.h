@@ -35,7 +35,7 @@ class UE_ASSIMP_API UAssimpImportContext : public UObject
 	GENERATED_BODY()
 
 public:
-	int32 MaxConcurrentTasks = 4;
+	int32 MaxConcurrentTasks = 2;
 
 	int32 TotalCount = 0;
 	FThreadSafeCounter FinishedCount;
@@ -58,7 +58,7 @@ public:
 
 public:
 	void StartNextTask(int32 Flags, bool DisableAutoSpaceChange, 
-		int32 MaxMeshesVal = 1, int32 MaxCamerasVal = 1, int32 MaxLightsVal = 1, int32 MaxMaterialsVal = 1, int32 MaxNodesVal = 1, float HandleTime = 0.034f);
+		int32 MaxMeshesVal = 1, int32 MaxCamerasVal = 1, int32 MaxLightsVal = 1, int32 MaxMaterialsVal = 1, int32 MaxNodesVal = 1, float HandleTime = 1.0f / 60.0f);
 	void Cancel();
 };
 

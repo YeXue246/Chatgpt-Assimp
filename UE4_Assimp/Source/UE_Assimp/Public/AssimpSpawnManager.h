@@ -51,80 +51,6 @@ struct FSceneMaterialBucket
     TArray<UMaterialInstanceDynamic*> Materials;
 };
 
-//UENUM()
-//enum class EACTextureType : uint8
-//{
-//    Color,
-//    Normal,
-//    Mask
-//};
-//
-//struct FTextureRawData
-//{
-//    int32 Width = 0;
-//    int32 Height = 0;
-//    TArray<uint8> RawBGRA;
-//
-//    bool IsValid() const
-//    {
-//        return Width > 0 && Height > 0 && RawBGRA.Num() == Width * Height * 4;
-//    }
-//};
-//
-//struct FPendingTextureCreate;
-//struct FMaterialTextureTracker;
-//struct FMaterialTextureTracker : public TSharedFromThis<FMaterialTextureTracker>
-//{
-//    FThreadSafeCounter PendingCount;
-//    FThreadSafeBool bFinished{ false };
-//
-//    int32 SceneIndex = INDEX_NONE;
-//    int32 Generation = 0;
-//
-//    TFunction<void()> OnAllFinished;
-//
-//    void Init(int32 InPending)
-//    {
-//        PendingCount.Set(InPending);
-//    }
-//
-//    void OneFinished()
-//    {
-//        const int32 Left = PendingCount.Decrement();
-//        if (Left <= 0)
-//        {
-//            bool bExpected = false;
-//            if (FPlatformAtomics::InterlockedCompareExchange(reinterpret_cast<int32*>(&bFinished), 1, 0) == 0)
-//            {
-//                if (OnAllFinished)
-//                {
-//                    AsyncTask(ENamedThreads::GameThread, [Callback = OnAllFinished]()
-//                        {
-//                            Callback();
-//                        });
-//                }
-//            }
-//        }
-//
-//    }
-//};
-//
-//USTRUCT()
-//struct FPendingTextureCreate
-//{
-//    bool bEmbedded = false;
-//    const aiTexture* EmbeddedTex = nullptr;
-//
-//    FString FilePath;
-//    FName ParamName;
-//    int32 SceneIndex = INDEX_NONE;
-//    int32 Generation = 0;
-//
-//    UMaterialInstanceDynamic* MID = nullptr;
-//    EACTextureType TextureType = EACTextureType::Color;
-//    TSharedPtr<FMaterialTextureTracker> Tracker;
-//};
-
 
 UCLASS()
 class UE_ASSIMP_API AAssimpSpawnManager : public AActor
@@ -134,8 +60,14 @@ class UE_ASSIMP_API AAssimpSpawnManager : public AActor
 public:
     AAssimpSpawnManager();
 
+    UFUNCTION(BlueprintCallable, Category = "Assimp|Performance")
+    void ApplyRecommendedPerformanceSettings();
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Performance")
+    bool bAutoApplyRecommendedSettingsAtBeginPlay = true;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
-    bool bEnableVerboseLog = true;
+    bool bEnableVerboseLog = false;
 
     virtual void BeginPlay() override;
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -215,7 +147,8 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
     int32 SpawnPerFrame = 3;
 
-
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
+    float DefaultTextureCooldownFrames = 0.5f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
     FTransform LocalOffset;
@@ -236,7 +169,7 @@ protected:
     int32 MaxNodesPerFrame = 5;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Build")
-    float LoopBuildHandleTime = 0.034f;
+    float LoopBuildHandleTime = 0.010f;
 
     UPROPERTY(EditAnywhere, Category = "Assimp|Build")
     int32 BuildMeshesPerFrame = 1;
