@@ -99,6 +99,7 @@ UAIScene* UAssimpImporter::AssimpImportFile(const FString& InFileName)
 	if (!DisableAutoSpaceChange)
 	{
 		Flags |= aiProcess_MakeLeftHanded | aiProcessPreset_TargetRealtime_Quality;
+		//Flags |= aiProcess_ConvertToLeftHanded | aiProcessPreset_TargetRealtime_Quality;
 	}
 
 	// The old implementation logic, but the import process cannot be terminated, so the read file logic is overridden based on this

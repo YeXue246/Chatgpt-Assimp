@@ -12,6 +12,7 @@
 #include "AIMesh.h"
 #include "UE_Assimp.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/Material.h"
 #include "Kismet/KismetRenderingLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetMaterialLibrary.h"
@@ -707,6 +708,27 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
 
     FTransform T = Task.Node->GetRootTransform() * LocalOffset;
 
+    if (bEnableVerboseLog && Task.Mesh && Task.Mesh->Mesh)
+    {
+        const bool bHasNormals = Task.Mesh->Mesh->mNormals != nullptr;
+        const FVector FirstNormal = (bHasNormals && Task.Mesh->Mesh->mNumVertices > 0)
+            ? FVector(Task.Mesh->Mesh->mNormals[0].x, Task.Mesh->Mesh->mNormals[0].y, Task.Mesh->Mesh->mNormals[0].z)
+            : FVector::ZeroVector;
+
+        const FMatrix WorldMatrix = T.ToMatrixWithScale();
+        const float Determinant = WorldMatrix.Determinant();
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("[LightingDebug][Scene=%d][Mat=%d] Node='%s' HasNormals=%d FirstNormal=%s TransformRot=%s TransformScale=%s Det=%.6f"),
+            Task.SceneIndex,
+            Task.MaterialIndex,
+            Task.Node ? *Task.Node->GetNodeName() : TEXT("<null>"),
+            bHasNormals ? 1 : 0,
+            *FirstNormal.ToString(),
+            *T.GetRotation().Rotator().ToCompactString(),
+            *T.GetScale3D().ToString(),
+            Determinant);
+    }
 
     FActorSpawnParameters Params;
     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -740,6 +762,22 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
         if (Mats.IsValidIndex(Task.MaterialIndex) && Mats[Task.MaterialIndex])
         {
             Comp->SetMaterial(0, Mats[Task.MaterialIndex]);
+
+            if (bEnableVerboseLog)
+            {
+                const UMaterialInterface* MatInterface = Mats[Task.MaterialIndex];
+                const UMaterial* BaseMaterial = MatInterface ? MatInterface->GetMaterial() : nullptr;
+                const bool bTwoSided = BaseMaterial ? BaseMaterial->IsTwoSided() : false;
+                const EBlendMode BlendMode = BaseMaterial ? BaseMaterial->GetBlendMode() : BLEND_Opaque;
+
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[LightingDebug][Scene=%d][Mat=%d] Material='%s' TwoSided=%d BlendMode=%d"),
+                    Task.SceneIndex,
+                    Task.MaterialIndex,
+                    MatInterface ? *MatInterface->GetName() : TEXT("<null>"),
+                    bTwoSided ? 1 : 0,
+                    static_cast<int32>(BlendMode));
+            }
             
             UE_LOG(LogTemp, Warning, TEXT("[SpawnOneMesh]: Mesh or StaticMesh for MaterialIndexin scene %d"), Task.MaterialIndex);
         }

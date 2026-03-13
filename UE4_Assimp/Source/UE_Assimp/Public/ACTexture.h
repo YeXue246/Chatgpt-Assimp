@@ -14,6 +14,17 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTextureReady, FName, Param, UTex
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllTexturesReady);
 
 UENUM(BlueprintType)
+enum class ETextureMemoryPressureLevel : uint8
+{
+    Normal,
+    Warning,
+    Critical
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnMemoryPressure, ETextureMemoryPressureLevel, PressureLevel, FName, Param, int32, AvailableMemoryMB, int32, ThresholdMemoryMB);
+
+
+UENUM(BlueprintType)
 enum class ETextureRequestState : uint8
 {
     Waiting,
@@ -74,6 +85,7 @@ struct FRuntimeTextureRequest
     bool bUploadFenceBegun = false;
     EAiTextureType TextureType = EAiTextureType::AiTextureType_UNKNOWN;
     ETextureRequestState State = ETextureRequestState::Pending;
+    bool bWarningBroadcasted = false;
 };
 
 struct FTextureUploadBudget
@@ -118,6 +130,10 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnAllTexturesReady OnAllTexturesReady;
 
+    UPROPERTY(BlueprintAssignable)
+    FOnMemoryPressure OnMemoryPressure;
+
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Performance", meta = (ClampMin = "1", ClampMax = "16"))
     int32 MaxDecodeTasks = 2;
 
@@ -133,6 +149,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Flow")
     bool bAutoStartStreaming = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Memory", meta = (ClampMin = "64", UIMin = "128", UIMax = "4096"))
+    int32 CriticalMemoryThresholdMB = 256;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Memory", meta = (ClampMin = "128", UIMin = "256", UIMax = "8192"))
+    int32 WarningMemoryThresholdMB = 1024;
+
+
 private:
     bool DecodeTexture(FRuntimeTextureRequest* Req);
     bool DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req);
@@ -140,6 +163,7 @@ private:
     void UploadTile_RenderThread(FRuntimeTextureRequest* Req, const FTextureTile& Tile);
     void ApplyTexture(FRuntimeTextureRequest* Req);
     void MarkRequestFailed(FRuntimeTextureRequest* Req);
+    bool HandleMemoryPressure(FRuntimeTextureRequest* Req);
     void CheckFinished();
     void Cleanup();
 

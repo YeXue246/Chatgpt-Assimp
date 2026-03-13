@@ -320,7 +320,8 @@ UAIScene* UAssimpFunctionLibrary::ImportScene(FString FileName, UObject* WorldCo
 	Assimp::DefaultLogger::set(new UEAssimpStream());
 
         if (!DisableAutoSpaceChange) {
-           Flags |= aiProcess_MakeLeftHanded | aiProcessPreset_TargetRealtime_Quality;
+            Flags |= aiProcess_MakeLeftHanded | aiProcessPreset_TargetRealtime_Quality;
+			//Flags |= aiProcess_ConvertToLeftHanded | aiProcessPreset_TargetRealtime_Quality;
         }
 
 	const struct aiScene* scene = aiImportFile(TCHAR_TO_UTF8(*FileName), (unsigned int)Flags);

@@ -161,6 +161,21 @@ UAIScene* UAIScene::InternalConstructNewScene_A(UObject* WorldContextObject, con
 	SceneObject->OwnedLights.SetNum(Scene->mNumLights);
 	SceneObject->OwnedMaterials.SetNum(Scene->mNumMaterials);
 
+	float ParsedScale = 1.0f;
+	bool bGotScale = false;
+	if (Scene->mMetaData)
+	{
+		bGotScale = Scene->mMetaData->Get("UnitScaleFactor", ParsedScale);
+	}
+	if (!bGotScale || ParsedScale == 0.f)
+	{
+		ParsedScale = 1.0f;
+		UE_LOG(LogAssimp, Verbose, TEXT("No valid UnitScaleFactor in metadata; using 1.0"));
+	}
+	SceneObject->SceneScale = ParsedScale;
+	UE_LOG(LogAssimp, Log, TEXT("UAIScene(Async): UnitScaleFactor = %g"), SceneObject->SceneScale);
+
+
 	SceneObject->AdjustmentXfm = aiMatrix4x4();
 
 	if (!DisableAutoSpaceChange)
@@ -169,6 +184,11 @@ UAIScene* UAIScene::InternalConstructNewScene_A(UObject* WorldContextObject, con
 		aiMatrix4x4::RotationX(PI / 2.f, Rot);
 		aiMatrix4x4::Scaling(aiVector3D(SceneObject->SceneScale), Scale);
 		SceneObject->AdjustmentXfm = Scale * Rot;
+
+		//if (Scene->mRootNode)
+		//{
+		//	Scene->mRootNode->mTransformation = SceneObject->AdjustmentXfm * Scene->mRootNode->mTransformation;
+		//}
 	}
 
 	SceneObject->BuildPhase = EAISceneBuildPhase::Meshes;
@@ -688,7 +708,8 @@ EPixelFormat UAIScene::GetPixelFormat(const aiTexture* Texture)
 
 		 const aiMatrix4x4 MyTransform = Item.ParentTransform * ANode->mTransformation;
 
-		 UNode->Setup_A(ANode, MyTransform);
+		 //UNode->Setup_A(ANode, MyTransform);
+		 UNode->Setup_A(ANode, Item.ParentTransform);
 
 		 for (uint32 i = 0; i < ANode->mNumChildren; ++i)
 		 {
