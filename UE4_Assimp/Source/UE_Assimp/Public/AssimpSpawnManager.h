@@ -19,6 +19,7 @@ class UAIMesh;
 class UAIMaterial;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UStaticMesh;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTextureStageFinished);
 
@@ -29,6 +30,7 @@ struct FAssimpMeshTask
 
 
     int32 SceneIndex = -1;
+    int32 BindingIndex = INDEX_NONE;
     UPROPERTY()
     UAINode* Node = nullptr;
 
@@ -51,6 +53,46 @@ struct FSceneMaterialBucket
     TArray<UMaterialInstanceDynamic*> Materials;
 };
 
+
+
+USTRUCT()
+struct FAssimpActorModelBinding
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    UStaticMesh* StaticMesh = nullptr;
+
+    UPROPERTY()
+    TArray<UMaterialInterface*> Materials;
+};
+
+USTRUCT(BlueprintType)
+struct FAssimpMeshMaterialBindingResult
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly, Category = "Assimp Spawn")
+    UStaticMesh* StaticMesh = nullptr;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Assimp Spawn")
+    FString ModelKey;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Assimp Spawn")
+    bool bFromCache = false;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Assimp Spawn")
+    TArray<UMaterialInterface*> SlotMaterials;
+};
+
+USTRUCT()
+struct FAssimpModelCacheEntry
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<FAssimpActorModelBinding> ActorBindings;
+};
 
 UCLASS()
 class UE_ASSIMP_API AAssimpSpawnManager : public AActor
@@ -86,6 +128,10 @@ public:
     DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnProgress, int32, Current, int32, Total);
     UPROPERTY(BlueprintAssignable)
     FOnProgress OnProgress;
+
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSceneMeshMaterialBindingsReady, const TArray<FAssimpMeshMaterialBindingResult>&, Results);
+    UPROPERTY(BlueprintAssignable, Category = "Assimp Spawn")
+    FOnSceneMeshMaterialBindingsReady OnSceneMeshMaterialBindingsReady;
 
     UFUNCTION(BlueprintCallable, Category = "Assimp")
     UAssimpImportContext* ImportScenesAsync(
@@ -230,6 +276,18 @@ protected:
 
     int32 TextureCount = 0;
 
+    FString CurrentSceneCacheKey;
+    bool bCurrentSceneUsingCache = false;
+
+    UPROPERTY(Transient)
+    TArray<FAssimpActorModelBinding> CurrentSceneBindings;
+
+    UPROPERTY(Transient)
+    TArray<FAssimpMeshMaterialBindingResult> CurrentSceneResults;
+
+    UPROPERTY(Transient)
+    TMap<FString, FAssimpModelCacheEntry> ModelCache;
+
     bool bWaitingTextures = false;
     bool bBuildingMeshTasks = false;
     bool bBuildingTextureTasks = false;
@@ -253,6 +311,7 @@ protected:
     void Tick_SpawnMeshes();
 
     void SpawnOneMesh(const FAssimpMeshTask Task);
+    FString BuildSceneCacheKey(const UAIScene* Scene) const;
     void FinishScene();
 
     bool ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal);

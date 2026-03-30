@@ -17,8 +17,6 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetMaterialLibrary.h"
 #include "DynamicMeshActor.h"
-#include "Engine/StaticMeshActor.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/DynamicMeshComponent.h"
 #include "HAL/FileManager.h"
 #include "IImageWrapper.h"
@@ -122,6 +120,10 @@ void AAssimpSpawnManager::InitializeAndStart(UObject* WorldContextObject, const 
 
     CurrentSceneIndex = 0;
     bCancelled = false;
+    CurrentSceneCacheKey.Reset();
+    bCurrentSceneUsingCache = false;
+    CurrentSceneBindings.Reset();
+    CurrentSceneResults.Reset();
 
     if (bEnableVerboseLog)
         UE_LOG(LogTemp, Warning, TEXT("[Assimp] Initialize with %d scenes"), Scenes.Num());
@@ -157,6 +159,26 @@ void AAssimpSpawnManager::StartNextScene()
 
     SceneAIMaterials.Empty();
     SceneAIMaterials = Scene->GetAllMaterials();
+    CurrentSceneCacheKey = BuildSceneCacheKey(Scene);
+    bCurrentSceneUsingCache = false;
+    CurrentSceneBindings.Reset();
+    CurrentSceneResults.Reset();
+
+    if (const FAssimpModelCacheEntry* CachedEntry = ModelCache.Find(CurrentSceneCacheKey))
+    {
+        if (CachedEntry->ActorBindings.Num() > 0)
+        {
+            bCurrentSceneUsingCache = true;
+            CurrentSceneBindings = CachedEntry->ActorBindings;
+            SceneAIMaterials.Empty();
+
+            if (bEnableVerboseLog)
+            {
+                UE_LOG(LogTemp, Log, TEXT("[Assimp][Cache] Hit model cache: %s, ActorBindings=%d"),
+                    *CurrentSceneCacheKey, CurrentSceneBindings.Num());
+            }
+        }
+    }
 
 
     if (SceneMaterials.IsValidIndex(CurrentSceneIndex))
@@ -183,6 +205,16 @@ void AAssimpSpawnManager::StartNextScene()
     bSceneActive = true;
     bBuildingMeshTasks = false;
     bBuildingTextureTasks = false;
+
+    if (bCurrentSceneUsingCache)
+    {
+        bBuildingMeshTasks = true;
+        if (UAINode* Root = Scene->GetRootNode())
+        {
+            NodeStack.Push(Root);
+            bRootQueued = true;
+        }
+    }
 
 
 }
@@ -411,9 +443,15 @@ void AAssimpSpawnManager::Tick_BuildMeshTasks()
         {
             if (!Mesh) continue;
 
+            const int32 BindingIndex = CurrentSceneTasks.Num();
+            const bool bNeedLiveBuild = !bCurrentSceneUsingCache || !CurrentSceneBindings.IsValidIndex(BindingIndex);
+
             if (Mesh->BuildState == EAIMeshBuildState::None)
             {
-                RegisterMesh(Mesh);
+                if (bNeedLiveBuild)
+                {
+                    RegisterMesh(Mesh);
+                }
             }
 
             FAssimpMeshTask Task;
@@ -421,6 +459,7 @@ void AAssimpSpawnManager::Tick_BuildMeshTasks()
             Task.Node = Node;
             Task.Mesh = Mesh;
             Task.MaterialIndex = Mesh->GetMaterialIndex();
+            Task.BindingIndex = BindingIndex;
 
 
 
@@ -648,52 +687,36 @@ void AAssimpSpawnManager::Tick_SpawnMeshes()
 
 void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
 {
-    if (!CachedWorld.IsValid()) return;
+    UStaticMesh* ResolvedStaticMesh = nullptr;
+    UMaterialInterface* ResolvedMaterial = nullptr;
+    TArray<UMaterialInterface*> ResolvedMaterials;
 
-
-    FTransform T = Task.Node->GetRootTransform() * LocalOffset;
-
-    if (bEnableVerboseLog && Task.Mesh && Task.Mesh->Mesh)
+    if (bCurrentSceneUsingCache)
     {
-        const bool bHasNormals = Task.Mesh->Mesh->mNormals != nullptr;
-        const FVector FirstNormal = (bHasNormals && Task.Mesh->Mesh->mNumVertices > 0)
-            ? FVector(Task.Mesh->Mesh->mNormals[0].x, Task.Mesh->Mesh->mNormals[0].y, Task.Mesh->Mesh->mNormals[0].z)
-            : FVector::ZeroVector;
+        if (CurrentSceneBindings.IsValidIndex(Task.BindingIndex))
+        {
+            const FAssimpActorModelBinding& Binding = CurrentSceneBindings[Task.BindingIndex];
+            ResolvedStaticMesh = Binding.StaticMesh;
+            if (Binding.Materials.Num() > 0)
+            {
+                ResolvedMaterial = Binding.Materials[0];
+                ResolvedMaterials = Binding.Materials;
+            }
+        }
 
-        const FMatrix WorldMatrix = T.ToMatrixWithScale();
-        const float Determinant = WorldMatrix.Determinant();
-
-        UE_LOG(LogTemp, Warning,
-            TEXT("[LightingDebug][Scene=%d][Mat=%d] Node='%s' HasNormals=%d FirstNormal=%s TransformRot=%s TransformScale=%s Det=%.6f"),
-            Task.SceneIndex,
-            Task.MaterialIndex,
-            Task.Node ? *Task.Node->GetNodeName() : TEXT("<null>"),
-            bHasNormals ? 1 : 0,
-            *FirstNormal.ToString(),
-            *T.GetRotation().Rotator().ToCompactString(),
-            *T.GetScale3D().ToString(),
-            Determinant);
+        if (!ResolvedStaticMesh && Task.Mesh && Task.Mesh->IsStaticMeshReady())
+        {
+            ResolvedStaticMesh = Task.Mesh->GetStaticMesh_NoBuild();
+        }
+    }
+    else if (Task.Mesh && Task.Mesh->IsStaticMeshReady())
+    {
+        ResolvedStaticMesh = Task.Mesh->GetStaticMesh_NoBuild();
     }
 
-    FActorSpawnParameters Params;
-    Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-
-    AStaticMeshActor* A = CachedWorld->SpawnActor<AStaticMeshActor>(SpawnClass, T, Params);
-    if (!A) return;
-    A->SetMobility(EComponentMobility::Movable);
-
-    UStaticMeshComponent* Comp = A->GetStaticMeshComponent();
-    if (!Comp) return;
-
-
-    if (Task.Mesh && Task.Mesh->IsStaticMeshReady())
+    if (!ResolvedStaticMesh && bEnableVerboseLog)
     {
-        Comp->SetStaticMesh(Task.Mesh->GetStaticMesh_NoBuild());
-    }
-    else
-    {
-        if (bEnableVerboseLog) UE_LOG(LogTemp, Warning, TEXT("[SpawnOneMesh]: Mesh or StaticMesh missing for task in scene %d"), Task.SceneIndex);
+        UE_LOG(LogTemp, Warning, TEXT("[SpawnOneMesh]: Mesh or StaticMesh missing for task in scene %d"), Task.SceneIndex);
     }
 
 
@@ -706,7 +729,12 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
 
         if (Mats.IsValidIndex(Task.MaterialIndex) && Mats[Task.MaterialIndex])
         {
-            Comp->SetMaterial(0, Mats[Task.MaterialIndex]);
+            if (!ResolvedMaterial)
+            {
+                ResolvedMaterial = Mats[Task.MaterialIndex];
+                ResolvedMaterials.Reset();
+                ResolvedMaterials.Add(ResolvedMaterial);
+            }
 
             if (bEnableVerboseLog)
             {
@@ -731,17 +759,77 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
         {
             if (DefaultMaterial)
             {
-                Comp->SetMaterial(0, DefaultMaterial);
+                ResolvedMaterial = DefaultMaterial;
+                ResolvedMaterials.Reset();
+                ResolvedMaterials.Add(ResolvedMaterial);
             }
             else if (ParentMaterial)
             {
-                Comp->SetMaterial(0, ParentMaterial);
+                ResolvedMaterial = ParentMaterial;
+                ResolvedMaterials.Reset();
+                ResolvedMaterials.Add(ResolvedMaterial);
             }
         }
     }
     else
     {
-        if (DefaultMaterial) Comp->SetMaterial(0, DefaultMaterial);
+        if (DefaultMaterial)
+        {
+            ResolvedMaterial = DefaultMaterial;
+            ResolvedMaterials.Reset();
+            ResolvedMaterials.Add(ResolvedMaterial);
+        }
+    }
+
+    if (!bCurrentSceneUsingCache)
+    {
+        if (!CurrentSceneBindings.IsValidIndex(Task.BindingIndex))
+        {
+            CurrentSceneBindings.SetNum(Task.BindingIndex + 1);
+        }
+
+        FAssimpActorModelBinding& Binding = CurrentSceneBindings[Task.BindingIndex];
+        Binding.StaticMesh = ResolvedStaticMesh;
+        Binding.Materials.Reset();
+        if (ResolvedMaterials.Num() > 0)
+        {
+            Binding.Materials = ResolvedMaterials;
+        }
+        else if (ResolvedMaterial)
+        {
+            Binding.Materials.Add(ResolvedMaterial);
+        }
+    }
+
+    if (!CurrentSceneResults.IsValidIndex(Task.BindingIndex))
+    {
+        CurrentSceneResults.SetNum(Task.BindingIndex + 1);
+    }
+
+    FAssimpMeshMaterialBindingResult& Result = CurrentSceneResults[Task.BindingIndex];
+    Result.StaticMesh = ResolvedStaticMesh;
+    Result.ModelKey = CurrentSceneCacheKey;
+    Result.bFromCache = bCurrentSceneUsingCache;
+    int32 SlotCount = 1;
+    if (ResolvedStaticMesh)
+    {
+        SlotCount = FMath::Max(1, ResolvedStaticMesh->GetStaticMaterials().Num());
+    }
+
+    Result.SlotMaterials.Reset();
+    Result.SlotMaterials.SetNum(SlotCount);
+
+    if (ResolvedMaterials.Num() > 0)
+    {
+        const int32 CopyCount = FMath::Min(SlotCount, ResolvedMaterials.Num());
+        for (int32 SlotIndex = 0; SlotIndex < CopyCount; ++SlotIndex)
+        {
+            Result.SlotMaterials[SlotIndex] = ResolvedMaterials[SlotIndex];
+        }
+    }
+    else if (ResolvedMaterial)
+    {
+        Result.SlotMaterials[0] = ResolvedMaterial;
     }
 }
 
@@ -759,9 +847,43 @@ void AAssimpSpawnManager::FinishScene()
     CurrentTaskIndex = 0;
     bRootQueued = false;
 
+    if (!bCurrentSceneUsingCache && !CurrentSceneCacheKey.IsEmpty() && CurrentSceneBindings.Num() > 0)
+    {
+        FAssimpModelCacheEntry& CacheEntry = ModelCache.FindOrAdd(CurrentSceneCacheKey);
+        CacheEntry.ActorBindings = CurrentSceneBindings;
+        if (bEnableVerboseLog)
+        {
+            UE_LOG(LogTemp, Log, TEXT("[Assimp][Cache] Store model cache: %s, ActorBindings=%d"),
+                *CurrentSceneCacheKey, CacheEntry.ActorBindings.Num());
+        }
+    }
+
+    CurrentSceneBindings.Reset();
+    bCurrentSceneUsingCache = false;
+    CurrentSceneCacheKey.Reset();
+
+    if (CurrentSceneResults.Num() > 0)
+    {
+        OnSceneMeshMaterialBindingsReady.Broadcast(CurrentSceneResults);
+    }
+    CurrentSceneResults.Reset();
+
 
     CurrentSceneIndex++;
     StartNextScene();
+}
+
+FString AAssimpSpawnManager::BuildSceneCacheKey(const UAIScene* Scene) const
+{
+    if (!Scene)
+    {
+        return FString();
+    }
+
+    FString CacheKey = Scene->FullFilePath;
+    FPaths::NormalizeFilename(CacheKey);
+    CacheKey = CacheKey.TrimStartAndEnd();
+    return CacheKey;
 }
 
 bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal)
