@@ -286,6 +286,9 @@ protected:
     TArray<FAssimpMeshMaterialBindingResult> CurrentSceneResults;
 
     UPROPERTY(Transient)
+    TArray<FAssimpMeshMaterialBindingResult> AllSceneResults;
+
+    UPROPERTY(Transient)
     TMap<FString, FAssimpModelCacheEntry> ModelCache;
 
     bool bWaitingTextures = false;

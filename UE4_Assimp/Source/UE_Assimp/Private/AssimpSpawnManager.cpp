@@ -124,6 +124,7 @@ void AAssimpSpawnManager::InitializeAndStart(UObject* WorldContextObject, const 
     bCurrentSceneUsingCache = false;
     CurrentSceneBindings.Reset();
     CurrentSceneResults.Reset();
+    AllSceneResults.Reset();
 
     if (bEnableVerboseLog)
         UE_LOG(LogTemp, Warning, TEXT("[Assimp] Initialize with %d scenes"), Scenes.Num());
@@ -143,6 +144,11 @@ void AAssimpSpawnManager::StartNextScene()
         if (bEnableVerboseLog)
             UE_LOG(LogTemp, Warning, TEXT("[Assimp] All scenes finished"));
 
+        if (AllSceneResults.Num() > 0)
+        {
+            OnSceneMeshMaterialBindingsReady.Broadcast(AllSceneResults);
+        }
+        AllSceneResults.Reset();
         OnAllScenesFinished.Broadcast();
         return;
     }
@@ -864,7 +870,7 @@ void AAssimpSpawnManager::FinishScene()
 
     if (CurrentSceneResults.Num() > 0)
     {
-        OnSceneMeshMaterialBindingsReady.Broadcast(CurrentSceneResults);
+        AllSceneResults.Append(CurrentSceneResults);
     }
     CurrentSceneResults.Reset();
 
@@ -936,6 +942,7 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
 void AAssimpSpawnManager::Cancel()
 {
     bCancelled = true;
+    AllSceneResults.Reset();
 
     if (bEnableVerboseLog)
         UE_LOG(LogTemp, Warning, TEXT("[Assimp] Cancel"));
