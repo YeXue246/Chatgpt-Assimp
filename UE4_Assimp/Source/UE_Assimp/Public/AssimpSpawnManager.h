@@ -19,6 +19,7 @@ class UAIMesh;
 class UAIMaterial;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UStaticMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTextureStageFinished);
 
@@ -38,6 +39,14 @@ struct FAssimpMeshTask
 
 
     int32 MaterialIndex = 0;
+
+    
+    UPROPERTY()
+    AActor* TargetActor = nullptr;
+
+    
+    UPROPERTY()
+    TArray<UStaticMeshComponent*> TargetMeshComponents;
 };
 
 
@@ -76,12 +85,26 @@ public:
     UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
     void InitializeAndStart(UObject* WorldContextObject, const TArray<UAIScene*>& InScenes);
 
+    UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject", DisplayName = "InitializeAndStart With Actor"))
+    void InitializeAndStartWithActor(
+        UObject* WorldContextObject, 
+        const TArray<UAIScene*>& InScenes, 
+        AActor* InActor
+    );
+
     void Cancel();
 
     DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllScenesFinished);
     UPROPERTY(BlueprintAssignable)
     FOnAllScenesFinished OnAllScenesFinished;
 
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSingleSceneMeshSpawnFinished, int32, SceneIndex, const TArray<UStaticMeshComponent*>&, MeshComponents);
+    UPROPERTY(BlueprintAssignable)
+    FOnSingleSceneMeshSpawnFinished OnSingleSceneMeshSpawnFinished;
+
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAllMeshSpawnFinished, const TArray<UStaticMeshComponent*>&, MeshComponents);
+    UPROPERTY(BlueprintAssignable)
+    FOnAllMeshSpawnFinished OnAllMeshSpawnFinished;
 
     DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnProgress, int32, Current, int32, Total);
     UPROPERTY(BlueprintAssignable)
@@ -203,6 +226,16 @@ protected:
 
     UPROPERTY(Transient)
     TArray<UAIScene*> Scenes;
+
+    UPROPERTY(Transient)
+    AActor* ExternalActor = nullptr;
+
+    UPROPERTY(Transient)
+    TArray<UStaticMeshComponent*> ExternalMeshComponents;
+
+    int32 ExternalMeshComponentCount = 0;
+
+    int32 CurrentSceneTaskMeshIndex = 0;
 
     UPROPERTY(Transient)
     UAssimpImportContext* AssimpImportContext = nullptr;

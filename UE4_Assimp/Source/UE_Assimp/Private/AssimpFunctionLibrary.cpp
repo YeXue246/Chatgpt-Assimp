@@ -567,7 +567,7 @@ void UAssimpFunctionLibrary::ProcessNodes(UObject* WorldContextObject, UAINode* 
 	if (!bSpawnParamsInitialized)
 	{
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		SpawnParams.TransformScaleMethod = ESpawnActorScaleMethod::MultiplyWithRoot;
+		// SpawnParams.TransformScaleMethod = ESpawnActorScaleMethod::MultiplyWithRoot;
 		bSpawnParamsInitialized = true;
 	}
 
@@ -743,6 +743,8 @@ void UAssimpImportContext::StartNextTask(int32 Flags, bool DisableAutoSpaceChang
 				ImportContext->RunningTasks.Decrement();
 				return;
 			}
+
+			Assimp::DefaultLogger::set(new UEAssimpStream());
 
 			const aiScene* Scene = aiImportFile(TCHAR_TO_UTF8(*File), (unsigned int)Flags);
 

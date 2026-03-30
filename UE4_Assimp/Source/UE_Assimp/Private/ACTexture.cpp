@@ -224,7 +224,9 @@ void UACTexture::TryStartDecode()
                         }
 
                         Req->Texture->AddToRoot();
+#if WITH_EDITORONLY_DATA
                         Req->Texture->MipGenSettings = TMGS_NoMipmaps;
+#endif
                         Req->Texture->NeverStream = true;
                         if (Req->bNormal)
                         {

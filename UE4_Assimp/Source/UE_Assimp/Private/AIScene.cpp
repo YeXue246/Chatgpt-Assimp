@@ -205,7 +205,6 @@ UAIScene* UAIScene::InternalConstructNewScene_A(UObject* WorldContextObject, con
 		UE_LOG(LogAssimp, Error, TEXT("GetWorld() is nullptr in StartTimer"));
 		return SceneObject;
 	}
-	UE_LOG(LogAssimp, Error, TEXT("GetWorld() is valid in StartTimer"));
 	SceneObject->GetWorld()->GetTimerManager().SetTimer(
 		SceneObject->BuildTimer,
 		SceneObject,
