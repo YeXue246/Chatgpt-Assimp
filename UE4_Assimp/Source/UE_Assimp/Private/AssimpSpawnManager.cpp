@@ -100,7 +100,10 @@ void AAssimpSpawnManager::ApplyRecommendedPerformanceSettings()
         TextureComponent ? TextureComponent->MaxUploadBytesPerFrame / (1024 * 1024) : 0);
 }
 
-void AAssimpSpawnManager::InitializeAndStart(UObject* WorldContextObject, const TArray<UAIScene*>& InScenes)
+void AAssimpSpawnManager::InitializeAndStart(
+    UObject* WorldContextObject,
+    const TArray<UAIScene*>& InScenes,
+    FOnSceneMeshMaterialBindingsReadyCallback InOnSceneMeshMaterialBindingsReady)
 {
     if (!WorldContextObject) return;
     CachedWorld = WorldContextObject->GetWorld();
@@ -124,6 +127,8 @@ void AAssimpSpawnManager::InitializeAndStart(UObject* WorldContextObject, const 
     bCurrentSceneUsingCache = false;
     CurrentSceneBindings.Reset();
     CurrentSceneResults.Reset();
+    AllSceneResults.Reset();
+    SceneMeshMaterialBindingsReadyCallback = InOnSceneMeshMaterialBindingsReady;
 
     if (bEnableVerboseLog)
         UE_LOG(LogTemp, Warning, TEXT("[Assimp] Initialize with %d scenes"), Scenes.Num());
@@ -143,6 +148,13 @@ void AAssimpSpawnManager::StartNextScene()
         if (bEnableVerboseLog)
             UE_LOG(LogTemp, Warning, TEXT("[Assimp] All scenes finished"));
 
+        if (AllSceneResults.Num() > 0)
+        {
+            OnSceneMeshMaterialBindingsReady.Broadcast(AllSceneResults);
+            SceneMeshMaterialBindingsReadyCallback.ExecuteIfBound(AllSceneResults);
+        }
+        AllSceneResults.Reset();
+        SceneMeshMaterialBindingsReadyCallback.Unbind();
         OnAllScenesFinished.Broadcast();
         return;
     }
@@ -864,7 +876,7 @@ void AAssimpSpawnManager::FinishScene()
 
     if (CurrentSceneResults.Num() > 0)
     {
-        OnSceneMeshMaterialBindingsReady.Broadcast(CurrentSceneResults);
+        AllSceneResults.Append(CurrentSceneResults);
     }
     CurrentSceneResults.Reset();
 
@@ -936,6 +948,8 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
 void AAssimpSpawnManager::Cancel()
 {
     bCancelled = true;
+    AllSceneResults.Reset();
+    SceneMeshMaterialBindingsReadyCallback.Unbind();
 
     if (bEnableVerboseLog)
         UE_LOG(LogTemp, Warning, TEXT("[Assimp] Cancel"));

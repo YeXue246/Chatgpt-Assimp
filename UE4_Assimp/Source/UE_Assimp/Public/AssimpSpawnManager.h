@@ -115,8 +115,15 @@ public:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaSeconds) override;
 
+    DECLARE_DYNAMIC_DELEGATE_OneParam(FOnSceneMeshMaterialBindingsReadyCallback, const TArray<FAssimpMeshMaterialBindingResult>&, Results);
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSceneMeshMaterialBindingsReady, const TArray<FAssimpMeshMaterialBindingResult>&, Results);
+
     UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
-    void InitializeAndStart(UObject* WorldContextObject, const TArray<UAIScene*>& InScenes);
+    void InitializeAndStart(
+        UObject* WorldContextObject,
+        const TArray<UAIScene*>& InScenes,
+        FOnSceneMeshMaterialBindingsReadyCallback InOnSceneMeshMaterialBindingsReady
+    );
 
     void Cancel();
 
@@ -129,7 +136,6 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnProgress OnProgress;
 
-    DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSceneMeshMaterialBindingsReady, const TArray<FAssimpMeshMaterialBindingResult>&, Results);
     UPROPERTY(BlueprintAssignable, Category = "Assimp Spawn")
     FOnSceneMeshMaterialBindingsReady OnSceneMeshMaterialBindingsReady;
 
@@ -284,6 +290,11 @@ protected:
 
     UPROPERTY(Transient)
     TArray<FAssimpMeshMaterialBindingResult> CurrentSceneResults;
+
+    UPROPERTY(Transient)
+    TArray<FAssimpMeshMaterialBindingResult> AllSceneResults;
+
+    FOnSceneMeshMaterialBindingsReadyCallback SceneMeshMaterialBindingsReadyCallback;
 
     UPROPERTY(Transient)
     TMap<FString, FAssimpModelCacheEntry> ModelCache;
