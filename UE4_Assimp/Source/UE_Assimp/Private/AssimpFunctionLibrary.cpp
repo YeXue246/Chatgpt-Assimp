@@ -744,6 +744,8 @@ void UAssimpImportContext::StartNextTask(int32 Flags, bool DisableAutoSpaceChang
 				return;
 			}
 
+			Assimp::DefaultLogger::set(new UEAssimpStream());
+
 			const aiScene* Scene = aiImportFile(TCHAR_TO_UTF8(*File), (unsigned int)Flags);
 
 			AsyncTask(ENamedThreads::GameThread,

@@ -304,6 +304,7 @@ UStaticMesh* UAIMesh::GetStaticMesh()
 	StaticMesh->GetStaticMaterials().Add(FStaticMaterial());
 
 	UStaticMesh::FBuildMeshDescriptionsParams BuildParams;
+	BuildParams.bFastBuild = true;
 	BuildParams.bBuildSimpleCollision = true;
 	// Do NOT touch other BuildParams fields here to avoid UE5.1 compatibility issues;
 	// the engine will compute tangents if they are not provided in MeshDescription.
@@ -746,6 +747,7 @@ void UAIMesh::FinalizeBuild_Build_GT()
 	Meshes.Add(&MeshDesc);
 
 	UStaticMesh::FBuildMeshDescriptionsParams Params;
+	Params.bFastBuild = true;
 	Params.bBuildSimpleCollision = true;
 
 	MeshDescBuilder.ResumeMeshDescriptionIndexing();
@@ -787,7 +789,7 @@ void UAIMesh::FinalizeBuild_Collision_GT()
 	}
 
 	UBodySetup* BodySetup = StaticMesh->GetBodySetup();
-	BodySetup->CollisionTraceFlag = CTF_UseComplexAsSimple;
+	BodySetup->CollisionTraceFlag = CTF_UseSimpleAsComplex;
 	BodySetup->bDoubleSidedGeometry = true;
 
 	BodySetup->InvalidatePhysicsData();

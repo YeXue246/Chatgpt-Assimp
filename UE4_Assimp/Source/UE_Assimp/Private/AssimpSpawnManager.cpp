@@ -821,6 +821,9 @@ void AAssimpSpawnManager::Cancel()
 
 UAssimpImportContext* AAssimpSpawnManager::ImportScenesAsync(const TArray<FString>& InFilenames, int32 Flags, bool DisableAutoSpaceChange, int32 MaxConcurrentTasks, FOnProgressUpdated OnProgressUpdated, FOnImportSceneComplete OnImportSceneComplete)
 {
+    if (!DisableAutoSpaceChange) {
+        Flags |= aiProcess_MakeLeftHanded | aiProcessPreset_TargetRealtime_Fast;
+    }
     AssimpImportContext = UAssimpFunctionLibrary::ImportScenesAsync(InFilenames, this, Flags, DisableAutoSpaceChange, MaxConcurrentTasks, MaxMeshesPerFrame, MaxCamerasPerFrame, MaxLightsPerFrame, MaxMaterialsPerFrame, MaxNodesPerFrame, LoopBuildHandleTime, OnProgressUpdated, OnImportSceneComplete);
     return AssimpImportContext;
 }
