@@ -662,8 +662,20 @@ bool UAIMesh::TickBuildVertices_GT(int32 Batch)
 		const FVertexInstanceID VI =
 			MeshDescBuilder.AppendInstance(V);
 
-		FVector Normal = CachedNormals[VertexIndex];
+		//FVector Normal = CachedNormals[VertexIndex];
 
+		//if (Normal.IsNearlyZero())
+		//{
+		//	Normal = FVector::UpVector;
+		//}
+		//else
+		//{
+		//	Normal.Normalize();
+		//}
+
+		//MeshDescBuilder.SetInstanceNormal(VI, Normal);
+
+		FVector Normal = CachedNormals[VertexIndex];
 		if (Normal.IsNearlyZero())
 		{
 			Normal = FVector::UpVector;
@@ -673,7 +685,27 @@ bool UAIMesh::TickBuildVertices_GT(int32 Batch)
 			Normal.Normalize();
 		}
 
-		MeshDescBuilder.SetInstanceNormal(VI, Normal);
+		FVector Tangent = FVector(1, 0, 0);
+		FVector Bitangent = FVector(0, 1, 0);
+
+		if (CachedLetpTangents.IsValidIndex(VertexIndex))
+		{
+			Tangent = CachedLetpTangents[VertexIndex];
+		}
+		if (CachedLetoBitangents.IsValidIndex(VertexIndex))
+		{
+			Bitangent = CachedLetoBitangents[VertexIndex];
+		}
+
+		Tangent = (Tangent - Normal * FVector::DotProduct(Normal, Tangent)).GetSafeNormal();
+
+		float Sign = 1.0f;
+		{
+			const FVector Cross = FVector::CrossProduct(Normal, Tangent);
+			Sign = (FVector::DotProduct(Cross, Bitangent) < 0.0f) ? -1.0f : 1.0f;
+		}
+
+		MeshDescBuilder.SetInstanceTangentSpace(VI, Normal, Tangent, Sign);
 
 		if (bHasUVs)
 		{
@@ -720,9 +752,9 @@ bool UAIMesh::TickBuildTriangles_GT(int32 Batch)
 		}
 
 		MeshDescBuilder.AppendTriangle(
-			InstanceQueue[i0],
-			InstanceQueue[i1],
 			InstanceQueue[i2],
+			InstanceQueue[i1],
+			InstanceQueue[i0],
 			PG
 		);
 	}

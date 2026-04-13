@@ -164,6 +164,8 @@ private:
 	TArray<FVector2D> CachedUV0;
 	TArray<int32> CachedTriangles;
 	TArray<FProcMeshTangent> CachedTangents;
+	TArray<FVector> CachedLetpTangents;
+	TArray<FVector> CachedLetoBitangents;
 
 
 	bool bCachedVertices = false;
