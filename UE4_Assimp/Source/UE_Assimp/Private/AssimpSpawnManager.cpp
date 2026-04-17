@@ -156,7 +156,7 @@ bool AAssimpSpawnManager::SpawnOneCachedMesh(const FAssimpCachedMeshData& Cached
     {
         FActorSpawnParameters Params;
         Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        TSubclassOf<AActor> ClassToUse = SpawnClass ? SpawnClass : AStaticMeshActor::StaticClass();
+        TSubclassOf<AActor> ClassToUse = SpawnClass ? SpawnClass : TSubclassOf<AActor>(AStaticMeshActor::StaticClass());
         AActor* Spawned = CachedWorld->SpawnActor(ClassToUse, &MeshTransform, Params);
         AStaticMeshActor* StaticActor = Cast<AStaticMeshActor>(Spawned);
         if (!StaticActor)
