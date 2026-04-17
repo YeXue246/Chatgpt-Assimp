@@ -203,6 +203,7 @@ void AAssimpSpawnManager::TickSpawnCachedSceneMeshes()
         PendingCachedMeshEntries.Empty();
         PendingCachedMeshSpawnIndex = 0;
         PendingCachedSpawnActor.Reset();
+        OnCachedSceneSpawnFinished.Broadcast();
     }
 }
 
@@ -229,6 +230,7 @@ bool AAssimpSpawnManager::SpawnCachedSceneByPath(const FString& ImportPath, AAct
         {
             bSpawnedAnyMesh |= SpawnOneCachedMesh(CachedMeshData, InActor);
         }
+        OnCachedSceneSpawnFinished.Broadcast();
         return bSpawnedAnyMesh;
     }
 
@@ -238,6 +240,7 @@ bool AAssimpSpawnManager::SpawnCachedSceneByPath(const FString& ImportPath, AAct
 
     if (PendingCachedMeshEntries.Num() == 0)
     {
+        OnCachedSceneSpawnFinished.Broadcast();
         return false;
     }
 

@@ -138,6 +138,10 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnProgress OnProgress;
 
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCachedSceneSpawnFinished);
+    UPROPERTY(BlueprintAssignable)
+    FOnCachedSceneSpawnFinished OnCachedSceneSpawnFinished;
+
     UFUNCTION(BlueprintCallable, Category = "Assimp")
     UAssimpImportContext* ImportScenesAsync(
         const TArray<FString>& InFilenames,
