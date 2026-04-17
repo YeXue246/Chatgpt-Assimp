@@ -62,7 +62,7 @@ struct FAssimpCachedMeshData
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
     TObjectPtr<UAIMesh> Mesh = nullptr;
 
-    // Óë Mesh ²ÄÖÊ²å²ÛÊýÁ¿±£³ÖÒ»ÖÂ£¬¿Õ²ÛÎ»±£³Ö nullptr
+    // ï¿½ï¿½ Mesh ï¿½ï¿½ï¿½Ê²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½Â£ï¿½ï¿½Õ²ï¿½Î»ï¿½ï¿½ï¿½ï¿½ nullptr
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
     TArray<TObjectPtr<UMaterialInterface>> MaterialSlots;
 };
@@ -116,6 +116,11 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnProgress OnProgress;
 
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCachedSceneSpawnFinished);
+    UPROPERTY(BlueprintAssignable)
+    FOnCachedSceneSpawnFinished OnCachedSceneSpawnFinished;
+
+
     UFUNCTION(BlueprintCallable, Category = "Assimp")
     UAssimpImportContext* ImportScenesAsync(
         const TArray<FString>& InFilenames,
@@ -130,7 +135,7 @@ public:
     bool IsSceneCached(const FString& ImportPath) const;
 
     UFUNCTION(BlueprintCallable, Category = "Assimp|Cache")
-    bool SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor);
+    bool SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor, bool bSpawnOverFrames = false);
 
     UFUNCTION(BlueprintCallable, Category = "Assimp|Cache")
     FString NormalizeSceneCachePath(const FString& ImportPath) const;
@@ -294,6 +299,11 @@ protected:
     float NodeTickTimer = 0.f;
     float SpawnTickTimer = 0.f;
 
+    FTimerHandle CachedSceneSpawnTimerHandle;
+    TArray<FAssimpCachedMeshData> PendingCachedMeshEntries;
+    int32 PendingCachedMeshSpawnIndex = 0;
+    TWeakObjectPtr<AActor> PendingCachedSpawnActor;
+
 
     void StartNextScene();
     void Tick_MakeMaterials();
@@ -311,4 +321,6 @@ protected:
 
 
     void CacheCurrentSceneData();
+    bool SpawnOneCachedMesh(const FAssimpCachedMeshData& CachedMeshData, AActor* InActor);
+    void TickSpawnCachedSceneMeshes();
 };
