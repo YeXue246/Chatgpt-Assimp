@@ -155,6 +155,9 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Assimp|Cache")
     bool IsSceneCached(const FString& ImportPath) const;
 
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Assimp|Cache")
+    int32 GetCachedMeshEntryCountByPath(const FString& ImportPath) const;
+
     UFUNCTION(BlueprintCallable, Category = "Assimp|Cache")
     bool SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor, bool bSpawnOverFrames = false);
 

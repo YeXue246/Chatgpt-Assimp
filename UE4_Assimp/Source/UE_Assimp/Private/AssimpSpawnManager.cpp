@@ -120,6 +120,13 @@ bool AAssimpSpawnManager::IsSceneCached(const FString& ImportPath) const
     return SceneCacheByPath.Contains(NormalizeSceneCachePath(ImportPath));
 }
 
+int32 AAssimpSpawnManager::GetCachedMeshEntryCountByPath(const FString& ImportPath) const
+{
+    const FString CacheKey = NormalizeSceneCachePath(ImportPath);
+    const FAssimpCachedSceneData* CachedSceneData = SceneCacheByPath.Find(CacheKey);
+    return CachedSceneData ? CachedSceneData->MeshEntries.Num() : 0;
+}
+
 bool AAssimpSpawnManager::SpawnOneCachedMesh(const FAssimpCachedMeshData& CachedMeshData, AActor* InActor)
 {
     if (!CachedWorld.IsValid() || !CachedMeshData.Mesh)
