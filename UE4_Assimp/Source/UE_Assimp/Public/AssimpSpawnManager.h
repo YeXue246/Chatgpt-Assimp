@@ -60,6 +60,34 @@ struct FSceneMaterialBucket
     TArray<UMaterialInstanceDynamic*> Materials;
 };
 
+USTRUCT(BlueprintType)
+struct FAssimpCachedMeshData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
+    FTransform NodeTransform = FTransform::Identity;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
+    TObjectPtr<UAIMesh> Mesh = nullptr;
+
+    // 与 Mesh 材质插槽数量保持一致，空槽位保持 nullptr
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
+    TArray<TObjectPtr<UMaterialInterface>> MaterialSlots;
+};
+
+USTRUCT(BlueprintType)
+struct FAssimpCachedSceneData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
+    TObjectPtr<UAIScene> Scene = nullptr;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Assimp Cache")
+    TArray<FAssimpCachedMeshData> MeshEntries;
+};
+
 
 UCLASS()
 class UE_ASSIMP_API AAssimpSpawnManager : public AActor
@@ -110,6 +138,10 @@ public:
     UPROPERTY(BlueprintAssignable)
     FOnProgress OnProgress;
 
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCachedSceneSpawnFinished);
+    UPROPERTY(BlueprintAssignable)
+    FOnCachedSceneSpawnFinished OnCachedSceneSpawnFinished;
+
     UFUNCTION(BlueprintCallable, Category = "Assimp")
     UAssimpImportContext* ImportScenesAsync(
         const TArray<FString>& InFilenames,
@@ -119,6 +151,15 @@ public:
         FOnProgressUpdated OnProgressUpdated,
         FOnImportSceneComplete OnImportSceneComplete
     );
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Assimp|Cache")
+    bool IsSceneCached(const FString& ImportPath) const;
+
+    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Assimp|Cache")
+    int32 GetCachedMeshEntryCountByPath(const FString& ImportPath) const;
+
+    UFUNCTION(BlueprintCallable, Category = "Assimp|Cache")
+    bool SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor, bool bSpawnOverFrames = false);
 
     void EnqueueTextureDecode(const FString& FilePath, EAiTextureType TextureType, FName ParamName, UMaterialInstanceDynamic* MID, TSharedPtr<FMaterialTextureTracker> Tracker);
 
@@ -256,6 +297,9 @@ protected:
     TArray<FAssimpMeshTask> CurrentSceneTasks;
     int32 CurrentTaskIndex = 0;
 
+    UPROPERTY(Transient)
+    TMap<FString, FAssimpCachedSceneData> SceneCacheByPath;
+
     int32 CurrentSceneIndex = 0;
     int32 MaterialIndex = 0;
     int32 PendingTextureImports = 0;
@@ -275,6 +319,11 @@ protected:
     float NodeTickTimer = 0.f;
     float SpawnTickTimer = 0.f;
 
+    FTimerHandle CachedSceneSpawnTimerHandle;
+    TArray<FAssimpCachedMeshData> PendingCachedMeshEntries;
+    int32 PendingCachedMeshSpawnIndex = 0;
+    TWeakObjectPtr<AActor> PendingCachedSpawnActor;
+
 
     void StartNextScene();
     void Tick_MakeMaterials();
@@ -289,5 +338,9 @@ protected:
     void FinishScene();
 
     bool ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal);
+    FString NormalizeSceneCachePath(const FString& ImportPath) const;
+    void CacheCurrentSceneData();
+    bool SpawnOneCachedMesh(const FAssimpCachedMeshData& CachedMeshData, AActor* InActor);
+    void TickSpawnCachedSceneMeshes();
 
 };

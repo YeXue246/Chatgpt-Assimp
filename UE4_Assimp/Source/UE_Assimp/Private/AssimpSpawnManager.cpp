@@ -23,7 +23,9 @@
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
 #include "Engine/Texture2D.h"
+#include "Engine/StaticMesh.h"
 #include "Misc/Paths.h"
+#include "TimerManager.h"
 #include "HAL/PlatformMemory.h"
 #include "HAL/PlatformMisc.h"
 
@@ -54,6 +56,11 @@ void AAssimpSpawnManager::BeginPlay()
 
 void AAssimpSpawnManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    if (CachedWorld.IsValid())
+    {
+        CachedWorld->GetTimerManager().ClearTimer(CachedSceneSpawnTimerHandle);
+    }
+
     Super::EndPlay(EndPlayReason);
 }
 
@@ -94,6 +101,165 @@ void AAssimpSpawnManager::ApplyRecommendedPerformanceSettings()
         TriangleBudgetPerFrame,
         TextureComponent ? TextureComponent->MaxDecodeTasks : 0,
         TextureComponent ? TextureComponent->MaxUploadBytesPerFrame / (1024 * 1024) : 0);
+}
+
+FString AAssimpSpawnManager::NormalizeSceneCachePath(const FString& ImportPath) const
+{
+    FString NormalizedPath = ImportPath;
+    FPaths::NormalizeFilename(NormalizedPath);
+    if (FPaths::IsRelative(NormalizedPath))
+    {
+        NormalizedPath = FPaths::ConvertRelativePathToFull(NormalizedPath);
+        FPaths::NormalizeFilename(NormalizedPath);
+    }
+    return NormalizedPath;
+}
+
+bool AAssimpSpawnManager::IsSceneCached(const FString& ImportPath) const
+{
+    return SceneCacheByPath.Contains(NormalizeSceneCachePath(ImportPath));
+}
+
+int32 AAssimpSpawnManager::GetCachedMeshEntryCountByPath(const FString& ImportPath) const
+{
+    const FString CacheKey = NormalizeSceneCachePath(ImportPath);
+    const FAssimpCachedSceneData* CachedSceneData = SceneCacheByPath.Find(CacheKey);
+    return CachedSceneData ? CachedSceneData->MeshEntries.Num() : 0;
+}
+
+bool AAssimpSpawnManager::SpawnOneCachedMesh(const FAssimpCachedMeshData& CachedMeshData, AActor* InActor)
+{
+    if (!CachedWorld.IsValid() || !CachedMeshData.Mesh)
+    {
+        return false;
+    }
+
+    FTransform MeshTransform = CachedMeshData.NodeTransform;
+
+    UStaticMeshComponent* TargetComp = nullptr;
+    if (InActor)
+    {
+        TargetComp = NewObject<UStaticMeshComponent>(InActor);
+        if (USceneComponent* RootComp = InActor->GetRootComponent())
+        {
+            TargetComp->SetupAttachment(RootComp);
+        }
+        else
+        {
+            InActor->SetRootComponent(TargetComp);
+        }
+        TargetComp->RegisterComponent();
+        TargetComp->SetMobility(EComponentMobility::Movable);
+        TargetComp->SetRelativeTransform(MeshTransform, false, nullptr, ETeleportType::ResetPhysics);
+    }
+    else
+    {
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        TSubclassOf<AActor> ClassToUse = SpawnClass ? SpawnClass : AStaticMeshActor::StaticClass();
+        AActor* Spawned = CachedWorld->SpawnActor(ClassToUse, &MeshTransform, Params);
+        AStaticMeshActor* StaticActor = Cast<AStaticMeshActor>(Spawned);
+        if (!StaticActor)
+        {
+            return false;
+        }
+
+        StaticActor->SetMobility(EComponentMobility::Movable);
+        TargetComp = StaticActor->GetStaticMeshComponent();
+    }
+
+    if (!TargetComp)
+    {
+        return false;
+    }
+
+    TargetComp->SetStaticMesh(CachedMeshData.Mesh->GetStaticMesh_NoBuild());
+    for (int32 SlotIndex = 0; SlotIndex < CachedMeshData.MaterialSlots.Num(); ++SlotIndex)
+    {
+        if (CachedMeshData.MaterialSlots[SlotIndex])
+        {
+            TargetComp->SetMaterial(SlotIndex, CachedMeshData.MaterialSlots[SlotIndex]);
+        }
+    }
+
+    ExternalMeshComponents.Add(TargetComp);
+    return true;
+}
+
+void AAssimpSpawnManager::TickSpawnCachedSceneMeshes()
+{
+    if (!CachedWorld.IsValid())
+    {
+        return;
+    }
+
+    const int32 BatchCount = FMath::Max(1, SpawnPerFrame);
+    int32 SpawnedThisTick = 0;
+    AActor* TargetActor = PendingCachedSpawnActor.Get();
+
+    while (SpawnedThisTick < BatchCount && PendingCachedMeshSpawnIndex < PendingCachedMeshEntries.Num())
+    {
+        SpawnOneCachedMesh(PendingCachedMeshEntries[PendingCachedMeshSpawnIndex], TargetActor);
+        ++PendingCachedMeshSpawnIndex;
+        ++SpawnedThisTick;
+    }
+
+    if (PendingCachedMeshSpawnIndex >= PendingCachedMeshEntries.Num())
+    {
+        CachedWorld->GetTimerManager().ClearTimer(CachedSceneSpawnTimerHandle);
+        PendingCachedMeshEntries.Empty();
+        PendingCachedMeshSpawnIndex = 0;
+        PendingCachedSpawnActor.Reset();
+        OnCachedSceneSpawnFinished.Broadcast();
+    }
+}
+
+bool AAssimpSpawnManager::SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor, bool bSpawnOverFrames)
+{
+    if (!CachedWorld.IsValid())
+    {
+        return false;
+    }
+
+    const FString CacheKey = NormalizeSceneCachePath(ImportPath);
+    FAssimpCachedSceneData* CachedSceneData = SceneCacheByPath.Find(CacheKey);
+    if (!CachedSceneData)
+    {
+        return false;
+    }
+
+    CachedWorld->GetTimerManager().ClearTimer(CachedSceneSpawnTimerHandle);
+
+    if (!bSpawnOverFrames)
+    {
+        bool bSpawnedAnyMesh = false;
+        for (const FAssimpCachedMeshData& CachedMeshData : CachedSceneData->MeshEntries)
+        {
+            bSpawnedAnyMesh |= SpawnOneCachedMesh(CachedMeshData, InActor);
+        }
+        OnCachedSceneSpawnFinished.Broadcast();
+        return bSpawnedAnyMesh;
+    }
+
+    PendingCachedMeshEntries = CachedSceneData->MeshEntries;
+    PendingCachedMeshSpawnIndex = 0;
+    PendingCachedSpawnActor = InActor;
+
+    if (PendingCachedMeshEntries.Num() == 0)
+    {
+        OnCachedSceneSpawnFinished.Broadcast();
+        return false;
+    }
+
+    const float TimerInterval = FMath::Max(0.001f, SpawnInterval);
+    CachedWorld->GetTimerManager().SetTimer(
+        CachedSceneSpawnTimerHandle,
+        this,
+        &AAssimpSpawnManager::TickSpawnCachedSceneMeshes,
+        TimerInterval,
+        true);
+
+    return true;
 }
 
 void AAssimpSpawnManager::InitializeAndStart(UObject* WorldContextObject, const TArray<UAIScene*>& InScenes)
@@ -751,6 +917,8 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
 
 void AAssimpSpawnManager::FinishScene()
 {
+    CacheCurrentSceneData();
+
     // 【核心对账账单】
     UE_LOG(LogTemp, Error, TEXT("================ [AssetTracker 对账单] ================"));
     UE_LOG(LogTemp, Error, TEXT("场景 %d 结束!"), CurrentSceneIndex);
@@ -798,6 +966,67 @@ void AAssimpSpawnManager::FinishScene()
         CurrentSceneIndex = NextScene;
         StartNextScene();
     }
+}
+
+void AAssimpSpawnManager::CacheCurrentSceneData()
+{
+    if (!Scenes.IsValidIndex(CurrentSceneIndex))
+    {
+        return;
+    }
+
+    UAIScene* CurrentScene = Scenes[CurrentSceneIndex];
+    if (!CurrentScene)
+    {
+        return;
+    }
+
+    const FString SceneCacheKey = NormalizeSceneCachePath(CurrentScene->FullFilePath);
+    if (SceneCacheKey.IsEmpty() || SceneCacheByPath.Contains(SceneCacheKey))
+    {
+        return;
+    }
+
+    FAssimpCachedSceneData CacheData;
+    CacheData.Scene = CurrentScene;
+    CacheData.MeshEntries.Reserve(CurrentSceneTasks.Num());
+
+    for (const FAssimpMeshTask& Task : CurrentSceneTasks)
+    {
+        if (!Task.Node || !Task.Mesh)
+        {
+            continue;
+        }
+
+        FAssimpCachedMeshData CachedMesh;
+        CachedMesh.NodeTransform = Task.Node->GetRootTransform() * LocalOffset;
+        CachedMesh.Mesh = Task.Mesh;
+
+        int32 SlotCount = 1;
+        if (UStaticMesh* StaticMesh = Task.Mesh->GetStaticMesh_NoBuild())
+        {
+            SlotCount = FMath::Max(1, StaticMesh->GetStaticMaterials().Num());
+        }
+        CachedMesh.MaterialSlots.SetNum(SlotCount);
+
+        UMaterialInterface* SceneMaterial = nullptr;
+        if (SceneMaterials.IsValidIndex(Task.SceneIndex))
+        {
+            const TArray<UMaterialInstanceDynamic*>& DynamicMaterials = SceneMaterials[Task.SceneIndex].Materials;
+            if (DynamicMaterials.IsValidIndex(Task.MaterialIndex))
+            {
+                SceneMaterial = DynamicMaterials[Task.MaterialIndex];
+            }
+        }
+        if (SceneMaterial)
+        {
+            CachedMesh.MaterialSlots[0] = SceneMaterial;
+        }
+
+        CacheData.MeshEntries.Add(MoveTemp(CachedMesh));
+    }
+
+    SceneCacheByPath.Add(SceneCacheKey, MoveTemp(CacheData));
 }
 
 bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal)
