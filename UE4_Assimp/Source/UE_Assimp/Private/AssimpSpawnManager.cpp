@@ -25,6 +25,7 @@
 #include "Engine/Texture2D.h"
 #include "Engine/StaticMesh.h"
 #include "Misc/Paths.h"
+#include "TimerManager.h"
 #include "HAL/PlatformMemory.h"
 #include "HAL/PlatformMisc.h"
 
@@ -55,6 +56,11 @@ void AAssimpSpawnManager::BeginPlay()
 
 void AAssimpSpawnManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    if (CachedWorld.IsValid())
+    {
+        CachedWorld->GetTimerManager().ClearTimer(CachedSceneSpawnTimerHandle);
+    }
+
     Super::EndPlay(EndPlayReason);
 }
 
@@ -114,7 +120,93 @@ bool AAssimpSpawnManager::IsSceneCached(const FString& ImportPath) const
     return SceneCacheByPath.Contains(NormalizeSceneCachePath(ImportPath));
 }
 
-bool AAssimpSpawnManager::SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor)
+bool AAssimpSpawnManager::SpawnOneCachedMesh(const FAssimpCachedMeshData& CachedMeshData, AActor* InActor)
+{
+    if (!CachedWorld.IsValid() || !CachedMeshData.Mesh)
+    {
+        return false;
+    }
+
+    FTransform MeshTransform = CachedMeshData.NodeTransform;
+
+    UStaticMeshComponent* TargetComp = nullptr;
+    if (InActor)
+    {
+        TargetComp = NewObject<UStaticMeshComponent>(InActor);
+        if (USceneComponent* RootComp = InActor->GetRootComponent())
+        {
+            TargetComp->SetupAttachment(RootComp);
+        }
+        else
+        {
+            InActor->SetRootComponent(TargetComp);
+        }
+        TargetComp->RegisterComponent();
+        TargetComp->SetMobility(EComponentMobility::Movable);
+        TargetComp->SetRelativeTransform(MeshTransform, false, nullptr, ETeleportType::ResetPhysics);
+    }
+    else
+    {
+        FActorSpawnParameters Params;
+        Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        TSubclassOf<AActor> ClassToUse = SpawnClass ? SpawnClass : AStaticMeshActor::StaticClass();
+        AActor* Spawned = CachedWorld->SpawnActor(ClassToUse, &MeshTransform, Params);
+        AStaticMeshActor* StaticActor = Cast<AStaticMeshActor>(Spawned);
+        if (!StaticActor)
+        {
+            return false;
+        }
+
+        StaticActor->SetMobility(EComponentMobility::Movable);
+        TargetComp = StaticActor->GetStaticMeshComponent();
+    }
+
+    if (!TargetComp)
+    {
+        return false;
+    }
+
+    TargetComp->SetStaticMesh(CachedMeshData.Mesh->GetStaticMesh_NoBuild());
+    for (int32 SlotIndex = 0; SlotIndex < CachedMeshData.MaterialSlots.Num(); ++SlotIndex)
+    {
+        if (CachedMeshData.MaterialSlots[SlotIndex])
+        {
+            TargetComp->SetMaterial(SlotIndex, CachedMeshData.MaterialSlots[SlotIndex]);
+        }
+    }
+
+    ExternalMeshComponents.Add(TargetComp);
+    return true;
+}
+
+void AAssimpSpawnManager::TickSpawnCachedSceneMeshes()
+{
+    if (!CachedWorld.IsValid())
+    {
+        return;
+    }
+
+    const int32 BatchCount = FMath::Max(1, SpawnPerFrame);
+    int32 SpawnedThisTick = 0;
+    AActor* TargetActor = PendingCachedSpawnActor.Get();
+
+    while (SpawnedThisTick < BatchCount && PendingCachedMeshSpawnIndex < PendingCachedMeshEntries.Num())
+    {
+        SpawnOneCachedMesh(PendingCachedMeshEntries[PendingCachedMeshSpawnIndex], TargetActor);
+        ++PendingCachedMeshSpawnIndex;
+        ++SpawnedThisTick;
+    }
+
+    if (PendingCachedMeshSpawnIndex >= PendingCachedMeshEntries.Num())
+    {
+        CachedWorld->GetTimerManager().ClearTimer(CachedSceneSpawnTimerHandle);
+        PendingCachedMeshEntries.Empty();
+        PendingCachedMeshSpawnIndex = 0;
+        PendingCachedSpawnActor.Reset();
+    }
+}
+
+bool AAssimpSpawnManager::SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor, bool bSpawnOverFrames)
 {
     if (!CachedWorld.IsValid())
     {
@@ -128,64 +220,34 @@ bool AAssimpSpawnManager::SpawnCachedSceneByPath(const FString& ImportPath, AAct
         return false;
     }
 
-    AActor* TargetContainerActor = InActor;
-    for (const FAssimpCachedMeshData& CachedMeshData : CachedSceneData->MeshEntries)
+    CachedWorld->GetTimerManager().ClearTimer(CachedSceneSpawnTimerHandle);
+
+    if (!bSpawnOverFrames)
     {
-        if (!CachedMeshData.Mesh)
+        bool bSpawnedAnyMesh = false;
+        for (const FAssimpCachedMeshData& CachedMeshData : CachedSceneData->MeshEntries)
         {
-            continue;
+            bSpawnedAnyMesh |= SpawnOneCachedMesh(CachedMeshData, InActor);
         }
-
-        FTransform MeshTransform = CachedMeshData.NodeTransform;
-
-        UStaticMeshComponent* TargetComp = nullptr;
-        if (TargetContainerActor)
-        {
-            TargetComp = NewObject<UStaticMeshComponent>(TargetContainerActor);
-            if (USceneComponent* RootComp = TargetContainerActor->GetRootComponent())
-            {
-                TargetComp->SetupAttachment(RootComp);
-            }
-            else
-            {
-                TargetContainerActor->SetRootComponent(TargetComp);
-            }
-            TargetComp->RegisterComponent();
-            TargetComp->SetMobility(EComponentMobility::Movable);
-            TargetComp->SetRelativeTransform(MeshTransform, false, nullptr, ETeleportType::ResetPhysics);
-        }
-        else
-        {
-            FActorSpawnParameters Params;
-            Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-            TSubclassOf<AActor> ClassToUse = SpawnClass ? SpawnClass : AStaticMeshActor::StaticClass();
-            AActor* Spawned = CachedWorld->SpawnActor(ClassToUse, &MeshTransform, Params);
-            AStaticMeshActor* StaticActor = Cast<AStaticMeshActor>(Spawned);
-            if (!StaticActor)
-            {
-                continue;
-            }
-
-            StaticActor->SetMobility(EComponentMobility::Movable);
-            TargetComp = StaticActor->GetStaticMeshComponent();
-        }
-
-        if (!TargetComp)
-        {
-            continue;
-        }
-
-        TargetComp->SetStaticMesh(CachedMeshData.Mesh->GetStaticMesh_NoBuild());
-        for (int32 SlotIndex = 0; SlotIndex < CachedMeshData.MaterialSlots.Num(); ++SlotIndex)
-        {
-            if (CachedMeshData.MaterialSlots[SlotIndex])
-            {
-                TargetComp->SetMaterial(SlotIndex, CachedMeshData.MaterialSlots[SlotIndex]);
-            }
-        }
-
-        ExternalMeshComponents.Add(TargetComp);
+        return bSpawnedAnyMesh;
     }
+
+    PendingCachedMeshEntries = CachedSceneData->MeshEntries;
+    PendingCachedMeshSpawnIndex = 0;
+    PendingCachedSpawnActor = InActor;
+
+    if (PendingCachedMeshEntries.Num() == 0)
+    {
+        return false;
+    }
+
+    const float TimerInterval = FMath::Max(0.001f, SpawnInterval);
+    CachedWorld->GetTimerManager().SetTimer(
+        CachedSceneSpawnTimerHandle,
+        this,
+        &AAssimpSpawnManager::TickSpawnCachedSceneMeshes,
+        TimerInterval,
+        true);
 
     return true;
 }

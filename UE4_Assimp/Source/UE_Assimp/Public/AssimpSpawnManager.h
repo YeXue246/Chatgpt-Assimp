@@ -152,7 +152,7 @@ public:
     bool IsSceneCached(const FString& ImportPath) const;
 
     UFUNCTION(BlueprintCallable, Category = "Assimp|Cache")
-    bool SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor);
+    bool SpawnCachedSceneByPath(const FString& ImportPath, AActor* InActor, bool bSpawnOverFrames = false);
 
     void EnqueueTextureDecode(const FString& FilePath, EAiTextureType TextureType, FName ParamName, UMaterialInstanceDynamic* MID, TSharedPtr<FMaterialTextureTracker> Tracker);
 
@@ -312,6 +312,11 @@ protected:
     float NodeTickTimer = 0.f;
     float SpawnTickTimer = 0.f;
 
+    FTimerHandle CachedSceneSpawnTimerHandle;
+    TArray<FAssimpCachedMeshData> PendingCachedMeshEntries;
+    int32 PendingCachedMeshSpawnIndex = 0;
+    TWeakObjectPtr<AActor> PendingCachedSpawnActor;
+
 
     void StartNextScene();
     void Tick_MakeMaterials();
@@ -328,5 +333,7 @@ protected:
     bool ImportTextureAsync(UObject* WorldContextObject, EAiTextureType TextureType, FName DynamicMaterialParamName, UAIScene* AssimpScene, UAIMaterial* AssimpMaterial, UMaterialInstanceDynamic* DynamicMaterialUnreal);
     FString NormalizeSceneCachePath(const FString& ImportPath) const;
     void CacheCurrentSceneData();
+    bool SpawnOneCachedMesh(const FAssimpCachedMeshData& CachedMeshData, AActor* InActor);
+    void TickSpawnCachedSceneMeshes();
 
 };
