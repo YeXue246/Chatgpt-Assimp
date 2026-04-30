@@ -477,6 +477,7 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
         UAIMaterial* AIMat = SceneAIMaterials[MaterialIndex];
         UMaterialInstanceDynamic* MID =
             UKismetMaterialLibrary::CreateDynamicMaterialInstance(this, ParentMaterial);
+        MID->SetScalarParameterValue(TEXT("DebugPreviewBaseColorTexture"), bDebugPreviewBaseColorTexture ? 1.0f : 0.0f);
 
         if (SceneMaterials.IsValidIndex(CurrentSceneIndex))
         {
@@ -509,6 +510,10 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
                 if (Embedded)
                 {
                     TextureComponent->RequestTexture(Embedded, MID, ParamName, TexType);
+                    if (bDebugPreviewBaseColorTexture && TexType == EAiTextureType::AiTextureType_DIFFUSE)
+                    {
+                        TextureComponent->RequestTexture(Embedded, MID, TEXT("Emissive"), EAiTextureType::AiTextureType_EMISSIVE);
+                    }
                 }
                 else
                 {
@@ -523,6 +528,16 @@ void AAssimpSpawnManager::Tick_MakeMaterials()
                     if (!bLoadedExternal)
                     {
                         UE_LOG(LogTemp, Warning, TEXT("[Texture] Failed to load external texture: %s (%s)"), *Path, *ParamName);
+                    }
+                    else if (bDebugPreviewBaseColorTexture && TexType == EAiTextureType::AiTextureType_DIFFUSE)
+                    {
+                        ImportTextureAsync(
+                            GetWorld(),
+                            EAiTextureType::AiTextureType_EMISSIVE,
+                            TEXT("Emissive"),
+                            Scenes[CurrentSceneIndex],
+                            AIMat,
+                            MID);
                     }
                 }
             }

@@ -217,6 +217,9 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
     bool bCreateUniqueMIDPerMeshComponent = false;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn|Debug")
+    bool bDebugPreviewBaseColorTexture = false;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
     FTransform LocalOffset;
 

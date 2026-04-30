@@ -9,6 +9,9 @@
 #include "Modules/ModuleManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/DateTime.h"
+#include "HAL/FileManager.h"
+#include "ImageUtils.h"
 #include "Engine/Texture2D.h"
 #include "EngineGlobals.h"
 #include "assimp/texture.h"
@@ -530,10 +533,13 @@ void UACTexture::ApplyTexture(FRuntimeTextureRequest* Req)
     }
 
     Req->bUploadFenceBegun = false;
-    Req->PixelBuffer.Data.Reset();
 
     if (Req->MID.IsValid() && Req->Texture)
     {
+        if (bExportFinalTextureToDisk)
+        {
+            SaveDebugTextureToDisk(Req);
+        }
         FName Param(*Req->ParameterName);
         Req->MID->SetTextureParameterValue(Param, Req->Texture);
         OnTextureReady.Broadcast(Param, Req->Texture);
@@ -549,6 +555,7 @@ void UACTexture::ApplyTexture(FRuntimeTextureRequest* Req)
         }
         --Req->PendingMIDCount;
     }
+    Req->PixelBuffer.Data.Reset();
 
     if (Req->PendingMIDCount <= 0)
     {
@@ -556,6 +563,45 @@ void UACTexture::ApplyTexture(FRuntimeTextureRequest* Req)
         ++FinishedTextures;
         CheckFinished();
     }
+}
+
+bool UACTexture::SaveDebugTextureToDisk(const FRuntimeTextureRequest* Req) const
+{
+    if (!Req || Req->Width <= 0 || Req->Height <= 0 || Req->PixelBuffer.Data.Num() != Req->Width * Req->Height * 4)
+    {
+        return false;
+    }
+
+    TArray<FColor> ColorBuffer;
+    ColorBuffer.SetNumUninitialized(Req->Width * Req->Height);
+    FMemory::Memcpy(ColorBuffer.GetData(), Req->PixelBuffer.Data.GetData(), Req->PixelBuffer.Data.Num());
+
+    TArray<uint8> PngData;
+    FImageUtils::PNGCompressImageArray(Req->Width, Req->Height, ColorBuffer, PngData);
+    if (PngData.Num() <= 0)
+    {
+        return false;
+    }
+
+    const FString Folder = FPaths::Combine(FPaths::ProjectSavedDir(), DebugExportFolder.IsEmpty() ? TEXT("AssimpTextureDebug") : DebugExportFolder);
+    IFileManager::Get().MakeDirectory(*Folder, true);
+
+    const FString SafeParam = Req->ParameterName.Replace(TEXT(" "), TEXT("_"));
+    const FString SafeTexName = Req->DebugTextureName.Replace(TEXT(" "), TEXT("_")).Replace(TEXT("/"), TEXT("_")).Replace(TEXT("\\"), TEXT("_"));
+    const FString FileName = FString::Printf(TEXT("%s_%s_%dx%d_%s.png"),
+        *SafeParam,
+        *SafeTexName,
+        Req->Width,
+        Req->Height,
+        *FDateTime::UtcNow().ToString(TEXT("%Y%m%d_%H%M%S")));
+    const FString OutputPath = FPaths::Combine(Folder, FileName);
+
+    const bool bSaved = FFileHelper::SaveArrayToFile(PngData, *OutputPath);
+    if (bEnableDebugTextureLog)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[AssimpTexture][Export] %s -> %s"), bSaved ? TEXT("Success") : TEXT("Failed"), *OutputPath);
+    }
+    return bSaved;
 }
 
 void UACTexture::MarkRequestFailed(FRuntimeTextureRequest* Req)
