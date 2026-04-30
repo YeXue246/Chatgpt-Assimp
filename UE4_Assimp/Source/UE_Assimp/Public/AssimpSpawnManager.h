@@ -215,6 +215,9 @@ protected:
     float DefaultTextureCooldownFrames = 0.5f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
+    bool bCreateUniqueMIDPerMeshComponent = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Spawn")
     FTransform LocalOffset;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp Build")

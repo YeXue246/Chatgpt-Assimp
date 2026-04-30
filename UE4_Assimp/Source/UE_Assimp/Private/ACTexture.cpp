@@ -8,6 +8,9 @@
 #include "IImageWrapperModule.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Engine/Texture2D.h"
+#include "EngineGlobals.h"
 #include "assimp/texture.h"
 
 namespace
@@ -125,9 +128,19 @@ void UACTexture::RequestTexture(const aiTexture* Texture, UMaterialInstanceDynam
     Req->bNormal = (Type == EAiTextureType::AiTextureType_NORMALS || Type == EAiTextureType::AiTextureType_NORMAL_CAMERA);
     Req->PendingMIDCount = 1;
     Req->State = ETextureRequestState::Pending;
+    Req->DebugTextureName = Texture->mFilename.length > 0 ? UTF8_TO_TCHAR(Texture->mFilename.C_Str()) : TEXT("<embedded>");
 
     Requests.Add(MoveTemp(Req));
     FRuntimeTextureRequest* Ptr = Requests.Last().Get();
+
+    if (bEnableDebugTextureLog)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[AssimpTexture][Queue] Req=%s Tex=%s Param=%s Frame=%llu"),
+            *Ptr->ID.ToString(EGuidFormats::DigitsWithHyphens),
+            *Ptr->DebugTextureName,
+            *Ptr->ParameterName,
+            GFrameCounter);
+    }
 
     DecodeQueue.Enqueue(Ptr);
     ++TotalTextures;
@@ -157,9 +170,19 @@ void UACTexture::RequestTextureFromFile(const FString& FilePath, UMaterialInstan
     Req->bNormal = (Type == EAiTextureType::AiTextureType_NORMALS || Type == EAiTextureType::AiTextureType_NORMAL_CAMERA);
     Req->PendingMIDCount = 1;
     Req->State = ETextureRequestState::Pending;
+    Req->DebugTextureName = FPaths::GetCleanFilename(FilePath);
 
     Requests.Add(MoveTemp(Req));
     FRuntimeTextureRequest* Ptr = Requests.Last().Get();
+
+    if (bEnableDebugTextureLog)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[AssimpTexture][Queue] Req=%s Tex=%s Param=%s Frame=%llu"),
+            *Ptr->ID.ToString(EGuidFormats::DigitsWithHyphens),
+            *Ptr->DebugTextureName,
+            *Ptr->ParameterName,
+            GFrameCounter);
+    }
 
     DecodeQueue.Enqueue(Ptr);
     ++TotalTextures;
@@ -223,7 +246,6 @@ void UACTexture::TryStartDecode()
                             return;
                         }
 
-                        Req->Texture->AddToRoot();
 #if WITH_EDITORONLY_DATA
                         Req->Texture->MipGenSettings = TMGS_NoMipmaps;
 #endif
@@ -242,13 +264,17 @@ void UACTexture::TryStartDecode()
                         }
 
                         Req->Texture->SRGB = !IsLinearColorTextureType(Req->TextureType);
-                        Req->Texture->UpdateResource();
-
                         Req->State = ETextureRequestState::Decoded;
-                        CreateTiles(Req);
-                        Req->UploadedTiles = 0;
-                        Req->TotalTiles = Req->Tiles.Num();
-                        UploadQueue.Enqueue(Req);
+                        if (!UploadWholeTexture(Req))
+                        {
+                            MarkRequestFailed(Req);
+                            --DecodeQueueCount;
+                            TryStartDecode();
+                            return;
+                        }
+
+                        Req->State = ETextureRequestState::Uploaded;
+                        ApplyQueue.Enqueue(Req);
 
                         --DecodeQueueCount;
                         TryStartDecode();
@@ -376,6 +402,61 @@ bool UACTexture::DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req)
     return Req->PixelBuffer.Data.Num() == (Req->Width * Req->Height * 4);
 }
 
+bool UACTexture::UploadWholeTexture(FRuntimeTextureRequest* Req)
+{
+    if (!Req || !Req->Texture || Req->Width <= 0 || Req->Height <= 0)
+    {
+        return false;
+    }
+
+    const int32 ExpectedBytes = Req->Width * Req->Height * 4;
+    if (Req->PixelBuffer.Data.Num() != ExpectedBytes)
+    {
+        return false;
+    }
+
+    Req->UploadStartFrame = GFrameCounter;
+    if (bEnableDebugTextureLog)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[AssimpTexture][UploadStart] Req=%s Tex=%s Param=%s Frame=%llu Size=%dx%d"),
+            *Req->ID.ToString(EGuidFormats::DigitsWithHyphens),
+            *Req->DebugTextureName,
+            *Req->ParameterName,
+            Req->UploadStartFrame,
+            Req->Width,
+            Req->Height);
+    }
+
+    FTexturePlatformData* PlatformData = Req->Texture->GetPlatformData();
+    if (!PlatformData || PlatformData->Mips.Num() <= 0)
+    {
+        return false;
+    }
+
+    FTexture2DMipMap& Mip = PlatformData->Mips[0];
+    void* MipData = Mip.BulkData.Lock(LOCK_READ_WRITE);
+    if (!MipData)
+    {
+        Mip.BulkData.Unlock();
+        return false;
+    }
+
+    FMemory::Memcpy(MipData, Req->PixelBuffer.Data.GetData(), static_cast<SIZE_T>(ExpectedBytes));
+    Mip.BulkData.Unlock();
+    Req->Texture->UpdateResource();
+    Req->UploadFinishFrame = GFrameCounter;
+    if (bEnableDebugTextureLog)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[AssimpTexture][UploadFinish] Req=%s Tex=%s Param=%s StartFrame=%llu FinishFrame=%llu"),
+            *Req->ID.ToString(EGuidFormats::DigitsWithHyphens),
+            *Req->DebugTextureName,
+            *Req->ParameterName,
+            Req->UploadStartFrame,
+            Req->UploadFinishFrame);
+    }
+    return true;
+}
+
 void UACTexture::CreateTiles(FRuntimeTextureRequest* Req)
 {
     if (!Req || Req->Width <= 0 || Req->Height <= 0 || Req->PixelBuffer.Data.Num() <= 0)
@@ -454,15 +535,18 @@ void UACTexture::ApplyTexture(FRuntimeTextureRequest* Req)
     if (Req->MID.IsValid() && Req->Texture)
     {
         FName Param(*Req->ParameterName);
-        TSet<FName>& ParamSet = AppliedMIDParams.FindOrAdd(Req->MID);
-
-        if (!ParamSet.Contains(Param))
+        Req->MID->SetTextureParameterValue(Param, Req->Texture);
+        OnTextureReady.Broadcast(Param, Req->Texture);
+        if (bEnableDebugTextureLog)
         {
-            Req->MID->SetTextureParameterValue(Param, Req->Texture);
-            ParamSet.Add(Param);
-            OnTextureReady.Broadcast(Param, Req->Texture);
+            UE_LOG(LogTemp, Log, TEXT("[AssimpTexture][Apply] Req=%s Tex=%s Param=%s Frame=%llu UploadStart=%llu UploadFinish=%llu"),
+                *Req->ID.ToString(EGuidFormats::DigitsWithHyphens),
+                *Req->DebugTextureName,
+                *Req->ParameterName,
+                GFrameCounter,
+                Req->UploadStartFrame,
+                Req->UploadFinishFrame);
         }
-
         --Req->PendingMIDCount;
     }
 
@@ -509,7 +593,7 @@ bool UACTexture::HandleMemoryPressure(FRuntimeTextureRequest* Req)
 
     if (AvailableMemoryMB < WarningThresholdMB && !Req->bWarningBroadcasted)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[AssimpTexture] Memory warning (%d MB < %d MB). Continue request with potential stutter risk. Param=%s"), AvailableMemoryMB, WarningThresholdMB, *Req->ParameterName);
+        UE_LOG(LogTemp, Warning, TEXT("[AssimpTexture] Memory warning (%d MB < %d MB). Req=%s Tex=%s Param=%s"), AvailableMemoryMB, WarningThresholdMB, *Req->ID.ToString(EGuidFormats::DigitsWithHyphens), *Req->DebugTextureName, *Req->ParameterName);
         OnMemoryPressure.Broadcast(ETextureMemoryPressureLevel::Warning, Param, AvailableMemoryMB, WarningThresholdMB);
         Req->bWarningBroadcasted = true;
     }
@@ -555,7 +639,6 @@ void UACTexture::Cleanup()
     {
         if (Req.IsValid() && Req->Texture)
         {
-            Req->Texture->RemoveFromRoot();
             Req->Texture = nullptr;
         }
     }
@@ -564,6 +647,5 @@ void UACTexture::Cleanup()
     DecodeQueue.Empty();
     UploadQueue.Empty();
     ApplyQueue.Empty();
-    AppliedMIDParams.Reset();
     DecodeQueueCount = 0;
 }

@@ -86,6 +86,9 @@ struct FRuntimeTextureRequest
     EAiTextureType TextureType = EAiTextureType::AiTextureType_UNKNOWN;
     ETextureRequestState State = ETextureRequestState::Pending;
     bool bWarningBroadcasted = false;
+    FString DebugTextureName;
+    uint64 UploadStartFrame = 0;
+    uint64 UploadFinishFrame = 0;
 };
 
 struct FTextureUploadBudget
@@ -149,6 +152,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Flow")
     bool bAutoStartStreaming = true;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Debug")
+    bool bEnableDebugTextureLog = false;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Memory", meta = (ClampMin = "64", UIMin = "128", UIMax = "4096"))
     int32 CriticalMemoryThresholdMB = 256;
 
@@ -159,6 +165,7 @@ public:
 private:
     bool DecodeTexture(FRuntimeTextureRequest* Req);
     bool DecodeAssimpTextureToBGRA(FRuntimeTextureRequest* Req);
+    bool UploadWholeTexture(FRuntimeTextureRequest* Req);
     void CreateTiles(FRuntimeTextureRequest* Req);
     void UploadTile_RenderThread(FRuntimeTextureRequest* Req, const FTextureTile& Tile);
     void ApplyTexture(FRuntimeTextureRequest* Req);
@@ -171,7 +178,6 @@ private:
     TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> DecodeQueue;
     TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> UploadQueue;
     TQueue<FRuntimeTextureRequest*, EQueueMode::Mpsc> ApplyQueue;
-    TMap<TWeakObjectPtr<UMaterialInstanceDynamic>, TSet<FName>> AppliedMIDParams;
     TArray<TUniquePtr<FRuntimeTextureRequest>> Requests;
     FTextureUploadBudget Budget;
 
