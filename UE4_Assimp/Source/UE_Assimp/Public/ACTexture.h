@@ -155,6 +155,12 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Debug")
     bool bEnableDebugTextureLog = false;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Debug")
+    bool bExportFinalTextureToDisk = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Debug")
+    FString DebugExportFolder = TEXT("AssimpTextureDebug");
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Assimp|Texture|Memory", meta = (ClampMin = "64", UIMin = "128", UIMax = "4096"))
     int32 CriticalMemoryThresholdMB = 256;
 
@@ -172,6 +178,7 @@ private:
     void MarkRequestFailed(FRuntimeTextureRequest* Req);
     bool HandleMemoryPressure(FRuntimeTextureRequest* Req);
     void CheckFinished();
+    bool SaveDebugTextureToDisk(const FRuntimeTextureRequest* Req) const;
     void Cleanup();
 
 private:
