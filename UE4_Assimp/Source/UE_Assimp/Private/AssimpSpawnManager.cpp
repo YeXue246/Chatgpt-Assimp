@@ -887,30 +887,79 @@ void AAssimpSpawnManager::SpawnOneMesh(const FAssimpMeshTask Task)
         {
             TargetComp->SetStaticMesh(Task.Mesh->GetStaticMesh_NoBuild());
         }
+        TargetComp->EmptyOverrideMaterials();
 
         UMaterialInstanceDynamic* TargetMID = nullptr;
         if (SceneMaterials.IsValidIndex(Task.SceneIndex))
         {
             auto& Mats = SceneMaterials[Task.SceneIndex].Materials;
-            if (Mats.IsValidIndex(Task.MaterialIndex) && Mats[Task.MaterialIndex])
+            if (Mats.Num() > 0)
             {
-                TargetMID = Mats[Task.MaterialIndex];
+                const int32 ResolvedMaterialIndex = FMath::Clamp(Task.MaterialIndex, 0, Mats.Num() - 1);
+                if (Mats.IsValidIndex(ResolvedMaterialIndex) && Mats[ResolvedMaterialIndex])
+                {
+                    TargetMID = Mats[ResolvedMaterialIndex];
+                }
             }
         }
 
-        if (TargetMID)
+        const int32 SlotCount = FMath::Max(1, TargetComp->GetNumMaterials());
+        const int32 SlotIndex = FMath::Clamp(Task.MaterialIndex, 0, SlotCount - 1);
+        if (ParentMaterial)
         {
-            TargetComp->SetMaterial(0, TargetMID);
+            for (int32 Index = 0; Index < SlotCount; ++Index)
+            {
+                TargetComp->SetMaterial(Index, ParentMaterial);
+            }
         }
-        else if (ParentMaterial)
+        UMaterialInterface* MaterialToApply = TargetMID;
+        if (TargetMID && bCreateUniqueMIDPerMeshComponent)
         {
-            TargetComp->SetMaterial(0, ParentMaterial);
+            UMaterialInstanceDynamic* PerComponentMID = UMaterialInstanceDynamic::Create(ParentMaterial ? ParentMaterial : TargetMID, TargetComp);
+            if (PerComponentMID)
+            {
+                static const FName TextureParams[] = {
+                    TEXT("BaseColor"), TEXT("Normal"), TEXT("Metallic"), TEXT("Roughness"), TEXT("AmbientOcclusion"), TEXT("Emissive")
+                };
+
+                for (const FName& Param : TextureParams)
+                {
+                    UTexture* ParamTexture = nullptr;
+                    if (TargetMID->GetTextureParameterValue(Param, ParamTexture) && ParamTexture)
+                    {
+                        PerComponentMID->SetTextureParameterValue(Param, ParamTexture);
+                    }
+                }
+
+                float ScalarValue = 0.f;
+                if (TargetMID->GetScalarParameterValue(TEXT("UseBaseColorConstant"), ScalarValue))
+                {
+                    PerComponentMID->SetScalarParameterValue(TEXT("UseBaseColorConstant"), ScalarValue);
+                }
+                if (TargetMID->GetScalarParameterValue(TEXT("Opacity"), ScalarValue))
+                {
+                    PerComponentMID->SetScalarParameterValue(TEXT("Opacity"), ScalarValue);
+                }
+
+                FLinearColor VectorValue;
+                if (TargetMID->GetVectorParameterValue(TEXT("BaseColorConstant"), VectorValue))
+                {
+                    PerComponentMID->SetVectorParameterValue(TEXT("BaseColorConstant"), VectorValue);
+                }
+
+                MaterialToApply = PerComponentMID;
+            }
+        }
+
+        if (MaterialToApply)
+        {
+            TargetComp->SetMaterial(SlotIndex, MaterialToApply);
         }
 
         if (bEnableVerboseLog)
         {
-            UE_LOG(LogTemp, Log, TEXT("[SpawnOneMesh] 成功: 节点=%s, 当前组件总数=%d"), 
-                *Task.Node->GetNodeName(), ExternalMeshComponents.Num());
+            UE_LOG(LogTemp, Log, TEXT("[SpawnOneMesh] 成功: 节点=%s MatIndex=%d SlotIndex=%d SceneMID=%p AppliedMat=%p 组件总数=%d"),
+                *Task.Node->GetNodeName(), Task.MaterialIndex, SlotIndex, TargetMID, MaterialToApply, ExternalMeshComponents.Num());
         }
     }
 }
@@ -1020,7 +1069,8 @@ void AAssimpSpawnManager::CacheCurrentSceneData()
         }
         if (SceneMaterial)
         {
-            CachedMesh.MaterialSlots[0] = SceneMaterial;
+            const int32 SlotIndex = FMath::Clamp(Task.MaterialIndex, 0, CachedMesh.MaterialSlots.Num() - 1);
+            CachedMesh.MaterialSlots[SlotIndex] = SceneMaterial;
         }
 
         CacheData.MeshEntries.Add(MoveTemp(CachedMesh));
@@ -1056,8 +1106,12 @@ bool AAssimpSpawnManager::ImportTextureAsync(UObject* WorldContextObject, EAiTex
     FPaths::NormalizeFilename(FilePath);
     if (FPaths::IsRelative(FilePath))
     {
-        FilePath = FPaths::ConvertRelativePathToFull(FilePath);
+        const FString SceneFilePath = AssimpScene->FullFilePath;
+        const FString SceneDirectory = FPaths::GetPath(SceneFilePath);
+        FilePath = FPaths::Combine(SceneDirectory, FilePath);
     }
+    FilePath = FPaths::ConvertRelativePathToFull(FilePath);
+    FPaths::NormalizeFilename(FilePath);
 
     if (!FPaths::FileExists(FilePath))
     {
